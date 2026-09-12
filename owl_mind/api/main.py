@@ -20,6 +20,12 @@ from fastapi import FastAPI, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from owl_mind import __version__
+
+# intent_recognizer is imported for its side effect: it registers the taxonomy
+# startup contract. Without the import the check is never registered, and
+# taxonomy drift would surface as a confusing request-time failure rather than
+# a failed boot.
+from owl_mind.core import intent_recognizer  # noqa: F401
 from owl_mind.core.config import Settings, load_settings_or_exit
 from owl_mind.core.contracts import registered_contracts, verify_startup_contracts
 from owl_mind.core.llm_gateway import LLMGateway
