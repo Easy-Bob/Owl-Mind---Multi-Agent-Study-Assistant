@@ -41,20 +41,23 @@ services:
     # Chroma runs as its own process rather than embedded in the API, so the
     # MCP materials server can share the same store later without a migration
     # (two processes cannot share an embedded PersistentClient).
-    # TODO: pin to a specific tag once verified locally; see ISSUE-001 risks.
-    image: chromadb/chroma:latest
+    # Pinned by digest after verifying this image locally (server reported
+    # API version 1.0.0). A tag can be repointed; a digest cannot, so the
+    # container the CI builds is the container that was tested here.
+    image: chromadb/chroma@sha256:1e0b73a187a28757c572acba508c46f48c9e8b0acaf5c20e6d95cdedce1acdf6
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
-      - chroma-data:/chroma/chroma
+      # This image persists to /data (verified: /data/chroma.sqlite3). Mounting
+      # the volume anywhere else leaves the data in the container's writable
+      # layer, where `docker compose down` destroys it.
+      - chroma-data:/data
     healthcheck:
-      # Chroma moved the heartbeat to /api/v2; fall back to v1 for older tags.
-      test:
-        - CMD-SHELL
-        - >-
-          curl -fsS http://localhost:8000/api/v2/heartbeat
-          || curl -fsS http://localhost:8000/api/v1/heartbeat
-          || exit 1
+      # The image ships no curl, wget, or python3 -- only bash. This opens a TCP
+      # connection to the listener, which chroma binds after startup. It proves
+      # the port is accepting, not that the API answers; an HTTP-level check
+      # would need a tool this image does not contain.
+      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/8000"]
       interval: 5s
       timeout: 3s
       retries: 20

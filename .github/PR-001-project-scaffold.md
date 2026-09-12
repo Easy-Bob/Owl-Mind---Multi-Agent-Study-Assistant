@@ -72,7 +72,9 @@ Closes #1
 - [x] Tested failure case: missing `ANTHROPIC_API_KEY` exits 1 with a message naming the
       setting.
 - [x] **Guard rails verified by deliberate violation** -- see evidence below.
-- [ ] `docker compose up -d --build` -- **NOT VERIFIED.** See Deployment Notes.
+- [x] `docker compose up -d --build` -- all three services healthy, `/health` reports
+      `ok`, and data survives a `down`/`up` cycle. Two compose bugs found and fixed in
+      the process; see below.
 
 ## Screenshots / Evidence
 
@@ -143,19 +145,27 @@ All checks passed!            # ruff
 - Requires image rebuild: **Yes** (first build).
 - Deployment steps: `cp .env.example .env`, fill in the key, `docker compose up -d --build`.
 
-**Unverified:** the Docker daemon was not available on the machine this was built on
-(`npipe:////./pipe/dockerDesktopLinuxEngine` unreachable). `docker compose config`
-validates, but the image build, the service health checks, and the DoD item "dependency
-connectivity verified from inside the API container" are all unconfirmed. **A reviewer
-should run `docker compose up -d --build` before approving**, and I will tick the box once
-it passes.
+Verified end to end. Two bugs surfaced only once the stack actually ran, both fixed in
+this branch:
+
+1. **The Chroma healthcheck could never pass.** It used `curl`, and the image ships no
+   curl, wget, or python3 -- only bash. Every probe returned `curl: not found`, the service
+   stayed `unhealthy`, and `api` (gated on `service_healthy`) never started, failing with
+   `dependency chroma failed to start` after 119s. The service itself was fine the whole
+   time. Replaced with a bash `/dev/tcp` probe, which needs nothing the image lacks.
+2. **The Chroma volume was mounted at the wrong path.** This image persists to `/data`
+   (verified: `/data/chroma.sqlite3`), but the named volume was mounted at
+   `/chroma/chroma`, which stayed empty. Data was going to the container's writable layer,
+   where `docker compose down` destroys it. Silent data loss, invisible until the first
+   time anyone restarted the stack with materials ingested.
 
 ## Risk / Rollback
 
 - **Risk:** low. No user data, no model calls, no persistence beyond empty volumes. The
   scaffold costs nothing to run -- there are zero Anthropic API calls in this PR.
-- **Risk:** `chromadb/chroma:latest` is unpinned (TODO in the compose file). Pinning to a
-  tag I could not pull would have been a guess. Pin it after the first successful build.
+- **Risk:** retired. Chroma is now pinned by digest
+  (`sha256:1e0b73a1...`, server API version 1.0.0) rather than tracking `latest`, so the
+  image CI builds is the image tested here.
 - **Rollback:** additive to an empty repository; revert the merge commit.
 
 ## Decisions for the reviewer
