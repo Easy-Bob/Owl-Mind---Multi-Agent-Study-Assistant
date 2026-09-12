@@ -67,13 +67,77 @@ rm -rf .venv && python -m venv .venv
 Each agent has a genuinely distinct risk profile — that is what justifies
 multi-agent over one prompt.
 
-| Agent | Temp | max_tokens | Owns | Hard boundary |
-|---|---:|---:|---|---|
-| **ConceptAgent** | 0.4 | 1200 | explanations, analogies, worked examples | cite materials; never invent APIs or signatures |
-| **PracticeAgent** | 0.1 | 1000 | Socratic hints on problems | **never emit a complete solution** — academic integrity |
-| **PlannerAgent** | 0.0 | 800 | study plans, spaced-repetition scheduling | scheduling is arithmetic, never LLM-guessed |
-| **QuizAgent** | 0.0 | 1200 | quiz generation, free-text grading | grading must be reproducible |
-| **TutorHandoffAgent** | — | — | escalate to a human TA | **no LLM call** — deterministic node |
+| Agent | max_tokens | Owns | Hard boundary |
+|---|---:|---|---|
+| **ConceptAgent** | 1200 | explanations, analogies, worked examples | cite materials; never invent APIs or signatures |
+| **PracticeAgent** | 1000 | Socratic hints on problems | **never emit a complete solution** — academic integrity |
+| **PlannerAgent** | 800 | study plans, spaced-repetition scheduling | scheduling is arithmetic, never LLM-guessed |
+| **QuizAgent** | 1200 | quiz generation, free-text grading | grading must be reproducible |
+| **TutorHandoffAgent** | — | escalate to a human TA | **no LLM call** — deterministic node |
+
+**The temperature column is gone (ISSUE-002 FR7).** `temperature`, `top_p`, and
+`top_k` are rejected with a 400 on Claude Sonnet 5 and Opus 5, so the original
+per-agent values could never have run. The guarantees they were meant to provide
+are unaffected, because they never came from sampling. Scheduling is exact because
+`schedule_review` is SM-2 arithmetic — pure code, one correct answer per input.
+Grading is *stabilised* rather than made deterministic: the rubric is pinned, the
+weights are summed in code, and the one remaining judgement ("is rubric point N
+present in this answer?") is decomposed into binary checks, which are far more
+consistent than asking for a holistic score. A sampling parameter would not have
+helped with either.
+
+`AgentProfile` instead carries `effort` (`low`–`max`), deliberately set to the
+same value for every role until the eval corpus can justify differentiating them
+— it is a cost/quality dial, not a randomness dial, and transcribing the old
+temperatures into effort levels would invent a mapping that does not exist.
+
+### 3.1.1 GradingAgent — a sixth role, deliberately after v1
+
+The roster keeps **both** QuizAgent and GradingAgent. They share `grade_answer`
+and differ in everything that matters:
+
+| | QuizAgent (v1) | GradingAgent (v2) |
+|---|---|---|
+| User | the student | a TA or instructor |
+| Input | answers to questions the system authored | real submissions by other people |
+| **Rubric provenance** | **model-authored, pinned at question-generation time** | **instructor-authored; the agent never authors the standard it grades against** |
+| May reveal solutions | no | yes |
+| Authority | informational | **proposes a draft; a human approves** |
+| Failure cost | one bad correction, student moves on | a wrong mark on a transcript |
+
+**Rubric provenance is the line between them.** A self-test can be graded against
+a rubric the model wrote, because the stakes absorb the occasional bad rubric. Real
+grading cannot: a model grading against its own belief has no external anchor, no
+appeal artifact, and no guarantee that two identical submissions score the same.
+GradingAgent may *draft* a rubric as a separate, human-approved step before a batch
+begins — never at grading time.
+
+That difference is a permission difference, not a topic difference, which is why it
+is a second agent rather than a flag on the first.
+
+**Why it is out of v1 scope.** GradingAgent introduces a second class of user, and
+with it the first authorization requirement in the system: the same question
+("what is the answer to Q3") must be refused for a student and answered for a TA.
+Routing currently keys on intent alone and there is no authentication at all.
+Adding user-role routing, a human-in-the-loop approval step, and an audit trail
+(rubric version, model id, timestamp, approver) is real work that does not fit
+alongside the four-day plan.
+
+Shipping it second is also the better story: v1 argues the roster is extensible,
+and GradingAgent is the extension — a new permission profile reusing `grade_answer`
+unchanged, with role-based routing as the single new architectural piece.
+
+**Two properties it must have that v1 does not:**
+
+- **Fairness is testable.** Grade the same submission twice: byte-identical output.
+  Shuffle a batch and regrade: scores do not move. Batch-position drift is a real
+  failure mode in model grading and a measurable one.
+- **Evaluation gets ground truth.** Agreement with human graders (Cohen's kappa,
+  mean absolute error against the TA's score) is an objective metric on a real
+  task — a stronger measurement story than the LLM-judge scores v1 relies on.
+
+Privacy note: student submissions are educational records. Anything deployed for
+real use needs a decision about what may leave the institution and what is retained.
 
 `PracticeAgent`'s no-solutions rule is the structural twin of `BillingAgent`'s
 "never promise a refund": same enforcement pattern (`AgentProfile.output_contract`
@@ -318,7 +382,8 @@ what make everything else verifiable.
 
 Authentication, response streaming, load testing, human-calibrated LLM-judge,
 multi-worker state externalisation, a second MCP server for progress data,
-sandboxed code execution. Each is real work; none fits alongside the above in four
+sandboxed code execution, **GradingAgent and the user-role routing it needs**
+(see 3.1.1). Each is real work; none fits alongside the above in four
 days.
 
 **Sandboxed code execution is the obvious next MCP server** and the natural Day-5+

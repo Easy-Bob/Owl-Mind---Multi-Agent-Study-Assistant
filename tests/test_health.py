@@ -68,3 +68,22 @@ def test_health_is_ok_when_every_dependency_answers(client, monkeypatch):
     monkeypatch.setattr(main, "check_chroma", reachable)
 
     assert client.get("/health").json()["status"] == "ok"
+
+
+def test_metrics_endpoint_serves_prometheus_text(client):
+    """ISSUE-002 FR4. The scrape target for per-component token accounting."""
+    response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert "text/plain" in response.headers["content-type"]
+
+    body = response.text
+    for family in ("llm_tokens_total", "llm_calls_total", "llm_latency_ms"):
+        assert family in body, f"{family} missing from /metrics"
+
+
+def test_gateway_is_available_on_app_state(client):
+    """The lifespan builds one gateway for the process, not one per request."""
+    from owl_mind.api.main import app
+
+    assert app.state.gateway is not None

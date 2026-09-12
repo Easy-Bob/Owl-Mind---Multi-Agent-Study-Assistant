@@ -16,11 +16,13 @@ from typing import Any
 
 import httpx
 import redis.asyncio as aioredis
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from owl_mind import __version__
 from owl_mind.core.config import Settings, load_settings_or_exit
 from owl_mind.core.contracts import registered_contracts, verify_startup_contracts
+from owl_mind.core.llm_gateway import LLMGateway
 
 logger = logging.getLogger("owl_mind")
 
@@ -97,14 +99,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     verify_startup_contracts()
 
     app.state.settings = settings
+    # One gateway for the process. Constructing the Anthropic client performs
+    # no network I/O, so a misconfigured key still fails at call time with the
+    # provider's own error rather than here.
+    app.state.gateway = LLMGateway(settings)
+
     logger.info(
         "Owl Mind %s starting (env=%s, model=%s)",
         __version__,
         settings.app_env,
         settings.model,
     )
-    yield
-    logger.info("Owl Mind shutting down")
+    try:
+        yield
+    finally:
+        await app.state.gateway.aclose()
+        logger.info("Owl Mind shutting down")
 
 
 def create_app() -> FastAPI:
@@ -136,6 +146,15 @@ def create_app() -> FastAPI:
             "contracts": registered_contracts(),
             "dependencies": dependencies,
         }
+
+    @app.get("/metrics", tags=["ops"])
+    async def metrics() -> Response:
+        """Prometheus scrape endpoint.
+
+        Unauthenticated. Fine locally; note that it exposes usage volume before
+        this is deployed anywhere public.
+        """
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     return app
 

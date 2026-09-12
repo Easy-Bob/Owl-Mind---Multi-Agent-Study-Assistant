@@ -27,6 +27,11 @@ docker compose up -d --build
 curl http://localhost:8080/health
 ```
 
+`GET /metrics` exposes Prometheus counters for model usage:
+`llm_tokens_total{component,model,direction}`, `llm_calls_total{component,model,outcome}`,
+and `llm_latency_ms{component}`. Every model call is attributed to a component, which is
+what makes "where is the cost going" a query rather than a guess.
+
 `/health` always answers with HTTP 200. `status` is `ok` when Redis and Chroma are both
 reachable and `degraded` otherwise, with a per-dependency reason -- a health endpoint that
 500s when a dependency dies tells you nothing at the moment you most need it.
@@ -38,7 +43,8 @@ python -m venv .venv
 ./.venv/Scripts/python -m pip install -r requirements-dev.txt   # Windows
 # source .venv/bin/activate && pip install -r requirements-dev.txt   # macOS/Linux
 
-./.venv/Scripts/python -m pytest
+./.venv/Scripts/python -m pytest            # free and offline: no network calls
+./.venv/Scripts/python -m pytest -m live    # ONE real API call; costs a fraction of a cent
 ./.venv/Scripts/python -m ruff check .
 ./.venv/Scripts/python -m uvicorn owl_mind.api.main:app --reload --port 8080
 ```
@@ -50,11 +56,11 @@ chroma` starts just those two.
 
 ```text
 owl_mind/
-├── api/main.py              FastAPI app, lifespan, /health
+├── api/main.py              FastAPI app, lifespan, /health, /metrics
 ├── core/
 │   ├── config.py            the only module that reads the environment
 │   ├── contracts.py         startup invariants; failures abort the boot
-│   └── llm_gateway.py       the only module permitted to call Anthropic   [stub]
+│   └── llm_gateway.py       the only module permitted to call Anthropic
 ├── agents/
 │   ├── base.py              AgentType, AgentProfile, BaseAgent            [stub]
 │   ├── orchestrator.py      routing decision, parallel dispatch           [stub]
@@ -74,12 +80,13 @@ and a test fails if anyone recreates it.
 
 ## Guard rails
 
-`tests/test_guardrails.py` enforces four rules that are cheap now and expensive to
+`tests/test_guardrails.py` enforces five rules that are cheap now and expensive to
 retrofit. Each one encodes a mistake the reference implementation actually paid for.
 
 | Rule | Why |
 | --- | --- |
 | `messages.create` only in `core/llm_gateway.py` | one door means token accounting is never a nine-call-site retrofit |
+| no `temperature` / `top_p` / `top_k` | rejected with a 400 by the current models; reproducibility comes from deterministic tools |
 | no top-level `mcp/` | it shadows the SDK, and the resulting import error is unreadable |
 | `os.environ` only in `core/config.py` | settings have one source, so a new key is trustworthy everywhere |
 | source is ASCII-only | delivery language is English; the leak never happens rather than being swept for later |

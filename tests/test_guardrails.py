@@ -20,6 +20,9 @@ import pytest
 LLM_GATEWAY = Path("core") / "llm_gateway.py"
 
 MESSAGES_CREATE = re.compile(r"messages\s*\.\s*create")
+# Matches the parameter being *set*, so prose explaining why we do not send
+# it stays legal.
+SAMPLING_PARAMS = re.compile(r"\b(temperature|top_p|top_k)\s*=")
 NON_ASCII = re.compile(r"[^\x00-\x7f]")
 
 
@@ -88,6 +91,23 @@ def test_mcp_import_resolves_to_the_installed_sdk(package_root):
     )
     assert package_root.resolve() not in resolved.parents, (
         f"'import mcp' resolved to {resolved}, inside the owl_mind package."
+    )
+
+
+def test_no_sampling_parameters(source_files, package_root):
+    """temperature / top_p / top_k are rejected with a 400 on current models.
+
+    Reproducibility in this design comes from deterministic tools
+    (grade_answer, schedule_review), never from a sampling parameter -- so
+    there is no reason to reach for one, and a 400 in production is a poor way
+    to rediscover that.
+    """
+    offences = _offences(source_files, package_root, SAMPLING_PARAMS)
+    assert not offences, (
+        "temperature, top_p, and top_k are rejected by the current models. "
+        "Use output_config.effort for depth, and deterministic tools for "
+        "reproducibility. Offending lines:\n"
+        + "\n".join(f"  owl_mind/{path}:{line}: {text}" for path, line, text in offences)
     )
 
 
