@@ -55,6 +55,9 @@ class IntentCategory(StrEnum):
     DEADLINE = "deadline"
     # ASSESS
     QUIZ_REQUEST = "quiz_request"
+    ANSWER_SUBMISSION = "answer_submission"
+    MOCK_EXAM = "mock_exam"
+    EXPLAIN_BACK = "explain_back"
     # SUPPORT
     MOTIVATION = "motivation"
     HUMAN_TUTOR = "human_tutor"
@@ -92,6 +95,9 @@ _INTENT_GROUPS: dict[IntentCategory, IntentGroup] = {
     IntentCategory.PROGRESS_QUERY: IntentGroup.PLAN,
     IntentCategory.DEADLINE: IntentGroup.PLAN,
     IntentCategory.QUIZ_REQUEST: IntentGroup.ASSESS,
+    IntentCategory.ANSWER_SUBMISSION: IntentGroup.ASSESS,
+    IntentCategory.MOCK_EXAM: IntentGroup.ASSESS,
+    IntentCategory.EXPLAIN_BACK: IntentGroup.ASSESS,
     IntentCategory.MOTIVATION: IntentGroup.SUPPORT,
     IntentCategory.HUMAN_TUTOR: IntentGroup.SUPPORT,
     IntentCategory.GREETING: IntentGroup.SUPPORT,
@@ -160,6 +166,21 @@ _TEMPLATES: dict[IntentCategory, tuple[str, ...]] = {
         "test my understanding of hash tables",
         "give me some practice questions about recursion",
     ),
+    IntentCategory.ANSWER_SUBMISSION: (
+        "my answer is that it uses a queue",
+        "I think the answer to question 2 is O(n log n)",
+        "here is my response: depth-first search with a visited set",
+    ),
+    IntentCategory.MOCK_EXAM: (
+        "give me a practice exam for the midterm",
+        "simulate a full test on data structures",
+        "I want a timed mock paper covering the whole course",
+    ),
+    IntentCategory.EXPLAIN_BACK: (
+        "let me explain how hashing works and tell me if I have it right",
+        "I will summarise dynamic programming, check my understanding",
+        "here is my explanation of TCP handshakes, is anything wrong",
+    ),
     IntentCategory.MOTIVATION: (
         "I will never understand this subject",
         "I feel like giving up on this course",
@@ -195,6 +216,12 @@ _TEMPLATES: dict[IntentCategory, tuple[str, ...]] = {
 _PATTERNS: tuple[tuple[re.Pattern[str], IntentCategory, float], ...] = (
     (re.compile(r"\b(quiz|test)\s+me\b", re.I), IntentCategory.QUIZ_REQUEST, 0.95),
     (re.compile(r"\bpractice questions?\b", re.I), IntentCategory.QUIZ_REQUEST, 0.85),
+    (re.compile(r"\b(mock|practice)\s+(exam|test|paper)\b", re.I),
+     IntentCategory.MOCK_EXAM, 0.9),
+    (re.compile(r"\b(my answer is|here is my (answer|response))\b", re.I),
+     IntentCategory.ANSWER_SUBMISSION, 0.9),
+    (re.compile(r"\b(check|tell me if)\b.*\b(my understanding|i have (it|this) right)\b", re.I),
+     IntentCategory.EXPLAIN_BACK, 0.8),
     (re.compile(r"\b(talk|speak)\s+to\s+(a\s+)?(ta|human|person|tutor|instructor)\b", re.I),
      IntentCategory.HUMAN_TUTOR, 0.95),
     (re.compile(r"\bescalate\b", re.I), IntentCategory.HUMAN_TUTOR, 0.8),

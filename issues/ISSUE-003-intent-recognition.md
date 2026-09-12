@@ -20,7 +20,7 @@
 
 ## Summary
 
-Implement `core/intent_recognizer.py`: classify a student utterance into one of 16
+Implement `core/intent_recognizer.py`: classify a student utterance into one of 19
 intents by fusing three independent signals (a model call, embedding similarity, and
 pattern rules), and return a structured judgement — category, group, confidence,
 per-source scores, urgency, and extracted entities — that the routing layer consumes.
@@ -65,7 +65,7 @@ when it turns out to be wrong.
 
 ### FR1 — Taxonomy
 
-- [ ] `IntentCategory` (StrEnum) with the 16 intents from plan §3.2, and `IntentGroup`
+- [ ] `IntentCategory` (StrEnum) with the 19 intents from plan §3.2, and `IntentGroup`
       with the five groups.
 
 | Group | Intents |
@@ -73,7 +73,7 @@ when it turns out to be wrong.
 | `LEARN` | `concept_explain`, `concept_compare`, `material_search` |
 | `PRACTICE` | `problem_help`, `homework_check`, `code_review`, `complexity_analysis` |
 | `PLAN` | `study_plan`, `progress_query`, `deadline` |
-| `ASSESS` | `quiz_request` |
+| `ASSESS` | `quiz_request`, `answer_submission`, `mock_exam`, `explain_back` |
 | `SUPPORT` | `motivation`, `human_tutor`, `greeting`, `feedback`, `other` |
 
 - [ ] `_INTENT_GROUPS` maps every intent to exactly one group.
@@ -322,7 +322,7 @@ then the winning category and confidence match the hand-calculated value.
 
 ## Risks
 
-- **Taxonomy ambiguity.** Sixteen intents with real overlap — `concept_explain` vs
+- **Taxonomy ambiguity.** Nineteen intents with real overlap — `concept_explain` vs
   `material_search`, `problem_help` vs `homework_check`. Expect boundary disputes.
   Mitigation: write the templates first and notice which ones you struggle to assign;
   that is where the taxonomy is wrong, not the classifier.

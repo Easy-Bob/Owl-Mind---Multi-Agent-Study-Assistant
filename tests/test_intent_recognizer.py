@@ -78,10 +78,23 @@ def recognizer(response: Any, index: Any = None, settings=None) -> IntentRecogni
 # -- FR1/FR2: taxonomy ------------------------------------------------------
 
 
-def test_sixteen_intents_each_in_exactly_one_group():
-    assert len(IntentCategory) == 16
+def test_every_intent_is_in_exactly_one_group():
+    assert len(IntentCategory) == 19
     assert set(_INTENT_GROUPS) == set(IntentCategory)
     assert set(_INTENT_GROUPS.values()) == set(IntentGroup)
+
+
+def test_assess_group_has_several_intents():
+    """A group of one is just an intent.
+
+    ASSESS shipped with only quiz_request, which made the group a poor
+    attractor -- assessment phrasings drifted into PRACTICE and SUPPORT. The
+    additions cover the rest of the loop: submitting an answer, sitting a mock
+    exam, and explaining a concept back to be checked.
+    """
+    assess = {i for i, g in _INTENT_GROUPS.items() if g is IntentGroup.ASSESS}
+    assert len(assess) >= 3
+    assert IntentCategory.ANSWER_SUBMISSION in assess
 
 
 def test_every_intent_has_at_least_three_templates():

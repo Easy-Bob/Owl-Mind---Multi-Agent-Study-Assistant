@@ -108,14 +108,14 @@ second class of user with its own permissions — a different product, not a fla
 
 ### 3.2 Intent taxonomy
 
-16 intents in 5 groups. Replaces the current customer-service set entirely.
+19 intents in 5 groups. Replaces the current customer-service set entirely.
 
 | Group | Intents |
 |---|---|
 | `LEARN` | `concept_explain`, `concept_compare`, `material_search` |
 | `PRACTICE` | `problem_help`, `homework_check`, `code_review`, `complexity_analysis` |
 | `PLAN` | `study_plan`, `progress_query`, `deadline` |
-| `ASSESS` | `quiz_request` |
+| `ASSESS` | `quiz_request`, `answer_submission`, `mock_exam`, `explain_back` |
 | `SUPPORT` | `motivation`, `human_tutor`, `greeting`, `feedback`, `other` |
 
 Group → primary agent: `LEARN`→Concept, `PRACTICE`→Practice, `PLAN`→Planner,
