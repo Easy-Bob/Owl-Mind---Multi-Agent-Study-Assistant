@@ -23,6 +23,11 @@ services:
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      # Published so `uvicorn` on the host can use the compose dependencies
+      # (the .env defaults point at localhost). Bound to the loopback address:
+      # a bare "6379:6379" would expose an unauthenticated Redis to the LAN.
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -38,6 +43,8 @@ services:
     # (two processes cannot share an embedded PersistentClient).
     # TODO: pin to a specific tag once verified locally; see ISSUE-001 risks.
     image: chromadb/chroma:latest
+    ports:
+      - "127.0.0.1:8000:8000"
     volumes:
       - chroma-data:/chroma/chroma
     healthcheck:
