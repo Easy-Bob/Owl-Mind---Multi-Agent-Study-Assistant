@@ -1,0 +1,69 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      # Service names override the host defaults in .env.
+      REDIS_URL: redis://redis:6379/0
+      CHROMA_HOST: chroma
+      CHROMA_PORT: "8000"
+    volumes:
+      # Seed materials are content, not image layers.
+      - ./owl_mind/data:/app/owl_mind/data
+    depends_on:
+      redis:
+        condition: service_healthy
+      chroma:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      # Published so `uvicorn` on the host can use the compose dependencies
+      # (the .env defaults point at localhost). Bound to the loopback address:
+      # a bare "6379:6379" would expose an unauthenticated Redis to the LAN.
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  chroma:
+    # Chroma runs as its own process rather than embedded in the API, so the
+    # MCP materials server can share the same store later without a migration
+    # (two processes cannot share an embedded PersistentClient).
+    # Pinned by digest after verifying this image locally (server reported
+    # API version 1.0.0). A tag can be repointed; a digest cannot, so the
+    # container the CI builds is the container that was tested here.
+    image: chromadb/chroma@sha256:1e0b73a187a28757c572acba508c46f48c9e8b0acaf5c20e6d95cdedce1acdf6
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # This image persists to /data (verified: /data/chroma.sqlite3). Mounting
+      # the volume anywhere else leaves the data in the container's writable
+      # layer, where `docker compose down` destroys it.
+      - chroma-data:/data
+    healthcheck:
+      # The image ships no curl, wget, or python3 -- only bash. This opens a TCP
+      # connection to the listener, which chroma binds after startup. It proves
+      # the port is accepting, not that the API answers; an HTTP-level check
+      # would need a tool this image does not contain.
+      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/8000"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  chroma-data:

@@ -1,0 +1,20 @@
+# Runtime dependencies. Bounded by major version; exact versions are captured
+# in requirements.lock.txt from `pip freeze` after a verified install, so the
+# container and a developer laptop resolve to the same tree.
+
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.32,<1.0
+pydantic>=2.9,<3.0
+pydantic-settings>=2.6,<3.0
+
+anthropic>=0.40,<1.0
+
+redis>=5.2,<7.0
+chromadb>=0.5,<2.0
+
+# Official MCP SDK. The local tooling package is named toolkit/ so this import
+# is never shadowed -- see tests/test_guardrails.py.
+mcp>=1.1,<2.0
+
+prometheus-client>=0.21,<1.0
+httpx>=0.27,<1.0
