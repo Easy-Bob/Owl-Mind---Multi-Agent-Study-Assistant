@@ -67,13 +67,25 @@ rm -rf .venv && python -m venv .venv
 Each agent has a genuinely distinct risk profile — that is what justifies
 multi-agent over one prompt.
 
-| Agent | Temp | max_tokens | Owns | Hard boundary |
-|---|---:|---:|---|---|
-| **ConceptAgent** | 0.4 | 1200 | explanations, analogies, worked examples | cite materials; never invent APIs or signatures |
-| **PracticeAgent** | 0.1 | 1000 | Socratic hints on problems | **never emit a complete solution** — academic integrity |
-| **PlannerAgent** | 0.0 | 800 | study plans, spaced-repetition scheduling | scheduling is arithmetic, never LLM-guessed |
-| **QuizAgent** | 0.0 | 1200 | quiz generation, free-text grading | grading must be reproducible |
-| **TutorHandoffAgent** | — | — | escalate to a human TA | **no LLM call** — deterministic node |
+| Agent | max_tokens | Owns | Hard boundary |
+|---|---:|---|---|
+| **ConceptAgent** | 1200 | explanations, analogies, worked examples | cite materials; never invent APIs or signatures |
+| **PracticeAgent** | 1000 | Socratic hints on problems | **never emit a complete solution** — academic integrity |
+| **PlannerAgent** | 800 | study plans, spaced-repetition scheduling | scheduling is arithmetic, never LLM-guessed |
+| **QuizAgent** | 1200 | quiz generation, free-text grading | grading must be reproducible |
+| **TutorHandoffAgent** | — | escalate to a human TA | **no LLM call** — deterministic node |
+
+**The temperature column is gone (ISSUE-002 FR7).** `temperature`, `top_p`, and
+`top_k` are rejected with a 400 on Claude Sonnet 5 and Opus 5, so the original
+per-agent values could never have run. The guarantees they were meant to provide
+are unaffected, because they never came from sampling: grading is reproducible
+because `grade_answer` compares against a rubric in code, and scheduling is exact
+because `schedule_review` is SM-2 arithmetic. The model only phrases the result.
+
+`AgentProfile` instead carries `effort` (`low`–`max`), deliberately set to the
+same value for every role until the eval corpus can justify differentiating them
+— it is a cost/quality dial, not a randomness dial, and transcribing the old
+temperatures into effort levels would invent a mapping that does not exist.
 
 `PracticeAgent`'s no-solutions rule is the structural twin of `BillingAgent`'s
 "never promise a refund": same enforcement pattern (`AgentProfile.output_contract`

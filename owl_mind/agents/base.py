@@ -4,16 +4,23 @@ STUB. Implements ISSUE-001 FR2. Behaviour lands with the agent issue;
 see plan section 3.1.
 
 The roster is declared here because the profile fields *are* the argument for
-multi-agent: the agents differ in what they may do (tool_scope), how
-deterministic they must be (temperature), and what they are forbidden to emit
-(risk_boundary) -- not merely in what they talk about.
+multi-agent: the agents differ in what they may do (tool_scope) and what they
+are forbidden to emit (risk_boundary) -- not merely in what they talk about.
+
+Note on determinism (ISSUE-002 FR7): reproducibility does not come from a
+sampling parameter. It comes from moving the exact work into tools -- a grade
+is computed by comparing against a rubric in code, a review date by SM-2
+arithmetic. The model only phrases the result. Sampling parameters are not sent
+at all; see core/llm_gateway.py.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
+
+Effort = Literal["low", "medium", "high", "xhigh", "max"]
 
 
 class AgentType(StrEnum):
@@ -34,7 +41,10 @@ class AgentProfile:
         role: system-prompt role statement.
         tool_scope: whitelist. Enforced before dispatch, so a tool outside this
             tuple is not merely discouraged -- it is absent from the request.
-        temperature: 0.0 where output must be reproducible (planner, quiz).
+        effort: reasoning depth and token spend. Deliberately the same for every
+            role until the eval corpus can justify differentiating them -- it is
+            a cost/quality dial, and guessed values look considered without
+            being so.
         max_tokens: per-role ceiling; the monolith alternative provisions every
             call for the worst case.
         risk_boundary: the one thing this role must never emit. Asserted
@@ -44,7 +54,7 @@ class AgentProfile:
 
     role: str
     tool_scope: tuple[str, ...] = ()
-    temperature: float = 0.3
+    effort: Effort = "medium"
     max_tokens: int = 1000
     risk_boundary: str = ""
     handoff_conditions: tuple[str, ...] = ()
