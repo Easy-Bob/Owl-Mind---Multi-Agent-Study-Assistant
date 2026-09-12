@@ -78,9 +78,13 @@ multi-agent over one prompt.
 **The temperature column is gone (ISSUE-002 FR7).** `temperature`, `top_p`, and
 `top_k` are rejected with a 400 on Claude Sonnet 5 and Opus 5, so the original
 per-agent values could never have run. The guarantees they were meant to provide
-are unaffected, because they never came from sampling: grading is reproducible
-because `grade_answer` compares against a rubric in code, and scheduling is exact
-because `schedule_review` is SM-2 arithmetic. The model only phrases the result.
+are unaffected, because they never came from sampling. Scheduling is exact because
+`schedule_review` is SM-2 arithmetic — pure code, one correct answer per input.
+Grading is *stabilised* rather than made deterministic: the rubric is pinned, the
+weights are summed in code, and the one remaining judgement ("is rubric point N
+present in this answer?") is decomposed into binary checks, which are far more
+consistent than asking for a holistic score. A sampling parameter would not have
+helped with either.
 
 `AgentProfile` instead carries `effort` (`low`–`max`), deliberately set to the
 same value for every role until the eval corpus can justify differentiating them
