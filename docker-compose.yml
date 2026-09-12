@@ -1,0 +1,59 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      # Service names override the host defaults in .env.
+      REDIS_URL: redis://redis:6379/0
+      CHROMA_HOST: chroma
+      CHROMA_PORT: "8000"
+    volumes:
+      # Seed materials are content, not image layers.
+      - ./owl_mind/data:/app/owl_mind/data
+    depends_on:
+      redis:
+        condition: service_healthy
+      chroma:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  chroma:
+    # Chroma runs as its own process rather than embedded in the API, so the
+    # MCP materials server can share the same store later without a migration
+    # (two processes cannot share an embedded PersistentClient).
+    # TODO: pin to a specific tag once verified locally; see ISSUE-001 risks.
+    image: chromadb/chroma:latest
+    volumes:
+      - chroma-data:/chroma/chroma
+    healthcheck:
+      # Chroma moved the heartbeat to /api/v2; fall back to v1 for older tags.
+      test:
+        - CMD-SHELL
+        - >-
+          curl -fsS http://localhost:8000/api/v2/heartbeat
+          || curl -fsS http://localhost:8000/api/v1/heartbeat
+          || exit 1
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  chroma-data:
