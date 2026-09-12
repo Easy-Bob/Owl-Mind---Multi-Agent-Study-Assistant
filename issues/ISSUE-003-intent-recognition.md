@@ -14,7 +14,7 @@
 | Milestone | Day 2 — Domain model |
 | Owner | TBD |
 | Reviewer | TBD |
-| Branch | `feature/4-intent-recognition` |
+| Branch | `feature/5-intent-recognition` |
 
 ---
 

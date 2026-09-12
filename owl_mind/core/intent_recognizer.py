@@ -372,7 +372,10 @@ class IntentRecognizer:
         entities = extract_entities(message, now=moment)
 
         if scores:
-            category = max(scores, key=lambda intent: (scores[intent], -ord(intent.value[0])))
+            # Score descending, then intent name ascending -- the same order
+            # supporting_candidates() uses, so primary and supporting selection
+            # cannot disagree about a tie.
+            category = min(scores, key=lambda intent: (-scores[intent], intent.value))
             confidence = scores[category]
         else:
             category, confidence = IntentCategory.OTHER, 0.0

@@ -228,6 +228,28 @@ async def test_supporting_candidates_are_ordered_and_deterministic():
     assert candidates == intent.supporting_candidates()
 
 
+async def test_primary_tie_breaks_by_name_not_dict_order():
+    """FR6.1 fixes the tie order; two intents can share a first letter.
+
+    concept_compare and concept_explain tie here. An argmax that only compares
+    the first character cannot separate them, so the winner falls out of dict
+    insertion order -- which flips with the order the signals happened to
+    return. Routing has to be reproducible to be testable.
+    """
+    rec = recognizer(
+        llm_reply(concept_explain=0.6, concept_compare=0.6), index=FakeIndex({})
+    )
+    forward = await rec.recognize("compare and explain", now=NOW)
+
+    rec_reversed = recognizer(
+        llm_reply(concept_compare=0.6, concept_explain=0.6), index=FakeIndex({})
+    )
+    backward = await rec_reversed.recognize("compare and explain", now=NOW)
+
+    assert forward.category is IntentCategory.CONCEPT_COMPARE
+    assert backward.category is forward.category
+
+
 async def test_low_confidence_falls_back_to_other():
     rec = recognizer(llm_reply(concept_explain=0.2), index=FakeIndex({}))
     intent = await rec.recognize("mmm", now=NOW)
