@@ -90,14 +90,17 @@ when it turns out to be wrong.
 
 ### FR3 — Pattern signal
 
-- [ ] `_pattern_recognize(message)` returns `{intent: score}` from regex rules. Pure,
-      synchronous, no I/O.
+- [ ] `_pattern_recognize(message)` returns `{intent: score}` from regex rules — **all**
+      rules that match, not just the best. Pure, synchronous, no I/O.
 - [ ] Covers the unambiguous cases only — `"quiz me"`, `"talk to a TA"`, greetings.
       Patterns exist for precision, not coverage; a rule that fires on ambiguous input
       makes the fusion worse, not better.
 
 ### FR4 — Embedding signal
 
+- [ ] Returns the **top-k nearest intents with scores** (k >= 3), not a single best
+      match. Chroma's query already returns n results with distances; collapsing that
+      to argmax throws away the evidence routing needs for fan-out.
 - [ ] Template embeddings are computed once at startup and reused; embedding every
       template on every request is wasteful and slow.
 - [ ] Uses the running Chroma service rather than adding a new dependency — a dedicated
@@ -115,28 +118,68 @@ when it turns out to be wrong.
 - [ ] One call through `LLMGateway.complete(component="intent", ...)`.
 - [ ] Few-shot prompt built from `_TEMPLATES`; structured output so the reply parses
       without regex.
+- [ ] The schema asks for a **ranked list of up to 3 intents with confidences**, not one
+      label. This is the highest-weighted signal; forcing it to emit a single label
+      discards exactly the information a composite request carries.
 - [ ] The prompt prefix (instructions + few-shot block) is **stable across requests** —
       only the student's message varies, and it goes last. That ordering is what makes
       the prefix cacheable later; putting the message anywhere else would silently
       prevent it.
 
-### FR6 — Fusion
+### FR6 — Fusion produces a distribution, not a label
 
 - [ ] Model and embedding signals run concurrently (`asyncio.gather`); patterns run
       synchronously. The model call is on the critical path, so the embedding lookup
       must not be serialised behind it.
 - [ ] Weighted vote: model `0.7`, embedding `0.2`, pattern `0.1`.
-- [ ] Below a confidence threshold, fall back to `other` rather than guessing. A wrong
-      confident route is worse than an admitted one.
+- [ ] **Sum weighted scores across every candidate each signal returned**, producing a
+      score for each intent any signal proposed — not a vote between three argmaxes.
+
+      This is the change that makes multi-agent fan-out possible. The reference
+      implementation collapsed each signal to a single label *before* voting
+      (`intent_recognizer.py` `_vote`), so its score map held at most three entries and
+      a composite request could only be detected downstream, by keyword matching on the
+      lowest-weighted signal. The strongest signal read the second request and then
+      discarded it.
+- [ ] Below a confidence threshold, the **primary** falls back to `other` rather than
+      guessing. A wrong confident route is worse than an admitted one.
 - [ ] Weights and threshold are module constants with a comment saying they are
       untuned starting points, not derived values.
 
 ### FR7 — Structured result
 
-- [ ] A frozen `Intent` dataclass: `category`, `group`, `confidence`,
-      `source_scores` (per signal), `urgency`, `entities`.
+- [ ] A frozen `Intent` dataclass: `category`, `group`, `confidence`, `scores`,
+      `source_scores`, `urgency`, `entities`.
+- [ ] `category` is the argmax and stays **single-valued**. Routing needs one agent to
+      own the response and the composer needs a spine to merge onto; an ambiguous
+      primary helps nobody.
+- [ ] `scores: dict[IntentCategory, float]` is the fused distribution. This is what the
+      routing layer reads to select supporting agents (FR6.1), and it is the field that
+      makes "one message, several agents" work on evidence rather than keywords.
 - [ ] `source_scores` is populated on every path, including the fallback — it is the
       only way to explain a route after the fact.
+
+### FR6.1 — What routing will do with this (contract, not implementation)
+
+Routing belongs to the next issue, but this issue must produce a result that supports
+it, so the contract is fixed here:
+
+- **At most 3 agents per request** — one primary plus up to two supporting.
+- Supporting agents are selected from `scores` by an **absolute floor only**. Do not
+  port the reference implementation's relative gate (`score >= 0.55 * primary`): on a
+  genuine two-domain request it left the second agent qualifying by a hair, so one
+  fewer keyword hit silently dropped half of what the student asked. With a hard cap of
+  3, the cap does the limiting and the relative gate only adds a fragile edge.
+- Ties break deterministically (score descending, then intent name ascending) so the
+  selection is testable.
+- `TutorHandoffAgent` does **not** count toward the cap. Escalation short-circuits
+  before scoring; it is not a fan-out participant.
+
+Why 3 and not more: three agents at up to three tool rounds each, plus a composer, is
+already ~10 model calls for one request. It also consumes 3 of the gateway's 8
+concurrency slots, so two simultaneous fan-outs saturate the process. And merging four
+independent answers into one coherent reply produces mush — the composer is the real
+constraint, not the budget.
 
 ### FR8 — Entities
 
@@ -202,6 +245,16 @@ three signals.
 Given the message "I want to talk to a TA",
 when `recognize()` runs,
 then `category` is `human_tutor` and `urgency` is `CRITICAL`.
+
+Given the message "explain BFS and then quiz me on it",
+when `recognize()` runs,
+then `category` is `concept_explain`, and `scores` contains `quiz_request` above the
+supporting floor — so routing can select two agents from the intent result alone,
+without keyword matching.
+
+Given a message that plausibly touches four intents,
+when routing selects agents,
+then at most 3 are chosen, and the selection is stable across repeated runs.
 
 Given an utterance that matches nothing well,
 when every signal scores below the threshold,

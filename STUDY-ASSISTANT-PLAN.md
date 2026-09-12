@@ -165,6 +165,28 @@ Group → primary agent: `LEARN`→Concept, `PRACTICE`→Practice, `PLAN`→Plan
 The three-way fusion (LLM 0.7 / embedding 0.2 / pattern 0.1) and the
 specific-over-generic refinement are kept as-is — only the vocabulary changes.
 
+**One change to the fusion's output, and it is load-bearing.** Each signal returns
+its top candidates with scores, and the vote sums across all of them, producing a
+distribution over intents rather than a winner. The reference implementation
+collapsed each signal to a single label *before* voting, so its score map held at
+most three entries; a composite request could then only be detected downstream, by
+keyword hits on the lowest-weighted signal. The LLM — weighted 0.7 — read the second
+half of the request and threw it away.
+
+**Fan-out rule: at most 3 agents per request** (one primary, up to two supporting),
+selected from the intent distribution by an absolute floor. The relative gate from
+the reference implementation (`score >= 0.55 * primary`) is dropped: on a real
+two-domain message it left the second agent qualifying by hundredths, so one fewer
+keyword hit silently dropped half of what the student asked. With a hard cap the cap
+does the limiting.
+
+Three is the ceiling because three agents at up to three tool rounds each, plus the
+composer, is already about ten model calls for one request — and it consumes three of
+the gateway's eight concurrency slots, so two simultaneous fan-outs saturate the
+process. Merging four independent answers also produces mush; the composer is the
+binding constraint, not the budget. `TutorHandoffAgent` is exempt — escalation
+short-circuits before scoring and is never a fan-out participant.
+
 **Add a boot-time assertion** that every `IntentCategory` member appears in
 `_TEMPLATES` and `_INTENT_GROUPS`, so taxonomy drift fails at startup rather than
 silently at runtime.
