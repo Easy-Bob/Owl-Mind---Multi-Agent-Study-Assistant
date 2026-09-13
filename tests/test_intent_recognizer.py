@@ -172,12 +172,46 @@ def test_fusion_sums_across_all_candidates():
             "pattern": {IntentCategory.QUIZ_REQUEST: 0.9},
         }
     )
-    assert fused[IntentCategory.CONCEPT_EXPLAIN] == pytest.approx(0.6 * 0.7 + 0.8 * 0.2)
-    assert fused[IntentCategory.QUIZ_REQUEST] == pytest.approx(0.4 * 0.7 + 0.9 * 0.1)
+    # All three signals contributed, so the divisor is the full 1.0 and the
+    # weighted mean and the weighted sum coincide.
+    assert fused[IntentCategory.CONCEPT_EXPLAIN] == pytest.approx(0.6 * 0.5 + 0.8 * 0.35)
+    assert fused[IntentCategory.QUIZ_REQUEST] == pytest.approx(0.4 * 0.5 + 0.9 * 0.15)
 
 
 def test_weights_sum_to_one():
     assert sum(WEIGHTS.values()) == pytest.approx(1.0)
+
+
+def test_fusion_divides_by_the_signals_that_contributed():
+    """A silent signal forfeits its vote; it does not cap everyone else's.
+
+    Summing with an implicit divisor of 1.0 meant a missing signal held the
+    whole distribution below its own ceiling -- with the model absent, nothing
+    could clear the primary threshold no matter how certain the other two were.
+    """
+    full = _fuse(
+        {
+            "llm": {IntentCategory.QUIZ_REQUEST: 1.0},
+            "embedding": {IntentCategory.QUIZ_REQUEST: 1.0},
+            "pattern": {IntentCategory.QUIZ_REQUEST: 1.0},
+        }
+    )
+    degraded = _fuse(
+        {
+            "llm": {},
+            "embedding": {IntentCategory.QUIZ_REQUEST: 1.0},
+            "pattern": {IntentCategory.QUIZ_REQUEST: 1.0},
+        }
+    )
+
+    assert full[IntentCategory.QUIZ_REQUEST] == pytest.approx(1.0)
+    # Two certain signals are certain, whatever the third would have said.
+    assert degraded[IntentCategory.QUIZ_REQUEST] == pytest.approx(1.0)
+    assert degraded[IntentCategory.QUIZ_REQUEST] >= PRIMARY_THRESHOLD
+
+
+def test_fusion_of_nothing_is_empty_not_a_division_by_zero():
+    assert _fuse({"llm": {}, "embedding": {}, "pattern": {}}) == {}
 
 
 # -- FR5/FR7: end to end through the fakes ---------------------------------
@@ -279,9 +313,14 @@ async def test_model_failure_degrades_to_the_other_signals():
     rec = IntentRecognizer(gateway, index=FakeIndex({IntentCategory.QUIZ_REQUEST: 0.9}))
     intent = await rec.recognize("quiz me on hash tables", now=NOW)
 
-    # pattern 0.95*0.1 + embedding 0.9*0.2 = 0.275 -- below the primary
-    # threshold, so OTHER is correct and honest here.
+    # The two surviving signals agree, and the divisor is their weight rather
+    # than the full panel, so they can still clear the primary threshold on
+    # their own. Under the reference implementation's implicit divisor of 1.0
+    # this capped out at 0.275 and every request during a model outage came
+    # back OTHER -- a degraded classifier reported as an unclassifiable user.
     assert intent.source_scores["llm"] == 0.0
+    assert intent.category is IntentCategory.QUIZ_REQUEST
+    assert intent.confidence >= PRIMARY_THRESHOLD
     assert intent.scores[IntentCategory.QUIZ_REQUEST] > 0
 
 

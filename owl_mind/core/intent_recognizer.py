@@ -238,10 +238,24 @@ _PATTERNS: tuple[tuple[re.Pattern[str], IntentCategory, float], ...] = (
 )
 
 
-# Untuned starting points, inherited from the reference implementation rather
-# than derived. The evaluation issue tunes them against a held-out split;
-# moving them before then is guessing with extra steps.
-WEIGHTS: dict[str, float] = {"llm": 0.7, "embedding": 0.2, "pattern": 0.1}
+# Deliberate starting points, not derived. The reference implementation used
+# 0.7/0.2/0.1, under which the minority signals could not change the outcome:
+# the most they can swing a single intent is their combined weight, so a model
+# whose top two candidates differ by more than 0.3/0.7 was unflippable, and a
+# model confident above 0.43 could never be displaced by an intent it had not
+# returned at all. Since the model reliably reports ~0.9 for a clear intent,
+# that made the other two signals arithmetic that ran and then did not matter.
+#
+# At 0.5/0.35/0.15 the combined swing is 0.5, which is the model's own full
+# weight -- the other two can now overrule it when they agree strongly against
+# it. That is the intended behaviour, not a side effect.
+#
+# The evaluation issue tunes these against a held-out split. Two things to
+# watch there: embedding similarity against short templates tends to run high
+# across many intents, so 0.35 may prove noisy; and the composite case
+# ("explain BFS then quiz me") now separates by a much narrower margin,
+# because the pattern rule pulls the second intent closer to first place.
+WEIGHTS: dict[str, float] = {"llm": 0.5, "embedding": 0.35, "pattern": 0.15}
 PRIMARY_THRESHOLD = 0.35
 SUPPORTING_FLOOR = 0.25
 MAX_AGENTS = 3
@@ -437,17 +451,39 @@ def _pattern_signal(message: str) -> dict[IntentCategory, float]:
 
 
 def _fuse(signals: dict[str, dict[IntentCategory, float]]) -> dict[IntentCategory, float]:
-    """Weighted sum across every candidate every signal returned.
+    """Weighted mean across every candidate every signal returned.
 
     Not a vote between three argmaxes -- that is the shape that made composite
     requests undetectable in the reference implementation.
+
+    A *mean*, not a sum: the divisor is the weight of the signals that actually
+    contributed, not the full panel. The reference implementation summed with an
+    implicit divisor of 1.0, so a silent signal did not forfeit its own vote --
+    it capped everyone else's. With the model down, the surviving two could
+    reach only 0.3 against a 0.35 primary threshold, which turned every request
+    during an outage into OTHER; and because nothing wires a Chroma client yet,
+    the embedding signal is empty on every production request today, depressing
+    every score by its weight. The thresholds were chosen against a full panel,
+    so they only mean what they say if the divisor reflects who voted.
+
+    An empty score map counts as not contributing. For the model signal that is
+    unambiguous -- it returns {} only when the call failed or was unparseable.
+    For the embedding signal it conflates "index unreachable" with "index
+    reachable but returned nothing", which in practice means an unseeded
+    collection. Both are the absence of usable evidence, so both forfeit.
     """
     fused: dict[IntentCategory, float] = {}
+    contributed = 0.0
     for name, scores in signals.items():
+        if not scores:
+            continue
         weight = WEIGHTS[name]
+        contributed += weight
         for intent, score in scores.items():
             fused[intent] = fused.get(intent, 0.0) + weight * score
-    return fused
+    if not contributed:
+        return {}
+    return {intent: score / contributed for intent, score in fused.items()}
 
 
 # -- the model signal's prompt ---------------------------------------------
