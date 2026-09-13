@@ -16,8 +16,14 @@ something another is allowed, and the whitelist enforces it before the model is 
 
 ## Status
 
-**Scaffold.** The shell runs and is tested; the domain logic is not written yet. Every
-module marked *stub* raises `NotImplementedError` naming the issue that implements it.
+**Routing works end to end.** Intent recognition and the five agents are implemented and
+tested; memory, MCP tooling, evaluation and the monitor are still stubs, and every module
+marked *stub* raises `NotImplementedError` naming the issue that implements it.
+
+`/chat` does not exist yet -- the orchestrator is exercised directly in tests. Three kinds
+of request are answered **without calling a model at all**: an explicit ask for a human, an
+ambiguous message (answered with a clarifying question built from the intent distribution),
+and an off-topic one (declined).
 
 ## Quick start
 
@@ -60,10 +66,13 @@ owl_mind/
 ├── core/
 │   ├── config.py            the only module that reads the environment
 │   ├── contracts.py         startup invariants; failures abort the boot
+│   ├── intent_recognizer.py three-way signal fusion over 16 intents
 │   └── llm_gateway.py       the only module permitted to call Anthropic
 ├── agents/
-│   ├── base.py              AgentType, AgentProfile, BaseAgent            [stub]
-│   ├── orchestrator.py      routing decision, parallel dispatch           [stub]
+│   ├── base.py              BaseAgent: tool loop, whitelist, statistics
+│   ├── roster.py            the five profiles and their implementations
+│   ├── orchestrator.py      routing decision, parallel dispatch, degradation
+│   ├── composer.py          merges several agent answers into one reply
 │   └── tools/               in-process tools over request state           [stub]
 ├── memory/                  working / episodic / profile layers           [stub]
 ├── toolkit/                 MCP client policy + materials store           [stub]
@@ -72,7 +81,7 @@ owl_mind/
 ├── monitor/                 online stats, anomalies, routing penalty      [stub]
 ├── skills/                  behavioural policy injected per request
 └── data/                    seed materials (bind-mounted, not baked in)
-tests/                       health, config, and guard rails
+tests/                       health, config, intent, agents, and guard rails
 ```
 
 `toolkit/`, not `mcp/`: a top-level `mcp` package shadows the official SDK on `sys.path`,

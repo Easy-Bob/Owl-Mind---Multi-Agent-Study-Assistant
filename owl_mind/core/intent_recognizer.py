@@ -267,28 +267,67 @@ class Intent:
 
     category: IntentCategory
     group: IntentGroup
+    # Always the fused score of ``category``. On the fallback path it is 0.0,
+    # because OTHER was never scored -- reporting the displaced winner's score
+    # against OTHER described neither.
     confidence: float
     # The fused distribution. Routing reads this to select supporting agents;
     # it is what makes "one message, several agents" work on evidence rather
-    # than on keyword matching.
+    # than on keyword matching. Preserved on the fallback path too: the
+    # evidence is what a clarifying question is built from.
     scores: dict[IntentCategory, float] = field(default_factory=dict)
-    # Per-signal confidence in the winner. Populated on every path including
-    # the fallback -- it is the only way to explain a route after the fact.
+    # Per-signal confidence in the intent this judgement is *about* --
+    # ``fallback_from`` when set, otherwise ``category``. Populated on every
+    # path; it is the only way to explain a route after the fact.
     source_scores: dict[str, float] = field(default_factory=dict)
     urgency: UrgencyLevel = UrgencyLevel.LOW
     entities: dict[str, Any] = field(default_factory=dict)
+    # Set only when the best candidate failed to clear PRIMARY_THRESHOLD and
+    # ``category`` was forced to OTHER. Records what was displaced, so the
+    # orchestrator can ask "did you mean ...?" instead of guessing or refusing.
+    fallback_from: IntentCategory | None = None
+    # Intents the llm or pattern signal actually returned. The embedding signal
+    # is deliberately absent: it measures surface similarity to a template, not
+    # evidence that the student asked a second question. See
+    # supporting_candidates().
+    corroborated: frozenset[IntentCategory] = field(default_factory=frozenset)
+
+    @property
+    def is_fallback(self) -> bool:
+        """True when no candidate cleared the primary threshold."""
+        return self.fallback_from is not None
 
     def supporting_candidates(self) -> list[IntentCategory]:
-        """Intents above the floor, excluding the primary, best first.
+        """Corroborated intents above the floor, excluding the primary, best first.
 
         Routing turns these into supporting agents (at most two -- see
         MAX_AGENTS). Ties break by name so the selection is deterministic and
         therefore testable.
+
+        Two gates, both of which cost money when they are missing:
+
+        ``corroborated`` -- an intent promotes an agent only if the model or a
+        pattern rule returned it. Embedding similarity alone must not: with the
+        model and the index both voting, an intent the model never returned
+        crosses SUPPORTING_FLOOR at a cosine similarity of 0.607
+        (0.35 * sim / 0.85 >= 0.25), and 0.6 between two short CS-study
+        sentences is ordinary rather than remarkable. Unguarded, index noise
+        buys a second agent call plus the composer call that merging two
+        answers requires -- two extra model calls on a single-intent request.
+        The embedding signal earns its weight by making the *primary* robust to
+        paraphrase; that is a different job from detecting a second request.
+
+        ``is_fallback`` -- nothing promotes when the primary itself did not
+        clear the bar. An intent too weak to lead is too weak to support.
         """
+        if self.is_fallback:
+            return []
         others = [
             (intent, score)
             for intent, score in self.scores.items()
-            if intent is not self.category and score >= SUPPORTING_FLOOR
+            if intent is not self.category
+            and score >= SUPPORTING_FLOOR
+            and intent in self.corroborated
         ]
         others.sort(key=lambda pair: (-pair[1], pair[0].value))
         return [intent for intent, _ in others]
@@ -389,18 +428,40 @@ class IntentRecognizer:
             # Score descending, then intent name ascending -- the same order
             # supporting_candidates() uses, so primary and supporting selection
             # cannot disagree about a tie.
-            category = min(scores, key=lambda intent: (-scores[intent], intent.value))
-            confidence = scores[category]
+            best = min(scores, key=lambda intent: (-scores[intent], intent.value))
+            best_confidence = scores[best]
         else:
-            category, confidence = IntentCategory.OTHER, 0.0
+            best, best_confidence = None, 0.0
 
-        if confidence < PRIMARY_THRESHOLD:
+        # OTHER carries two distinct meanings and the difference decides how the
+        # request is answered, so it is recorded rather than inferred:
+        #
+        #   fallback_from set   -- "evidence below bar". Something was asked and
+        #       the panel disagreed about what. The orchestrator asks which of
+        #       the top candidates was meant; the evidence is in `scores`.
+        #   fallback_from None  -- "no relevant intent". OTHER won on its own
+        #       merits (the model classified the message as off-topic), or no
+        #       signal returned anything at all. The orchestrator declines.
+        #
+        # Collapsing the two loses the ability to tell an ambiguous study
+        # question from a question about the weather.
+        if best is None or best_confidence < PRIMARY_THRESHOLD:
             category = IntentCategory.OTHER
+            confidence = 0.0
+            fallback_from = best
+        else:
+            category, confidence = best, best_confidence
+            fallback_from = None
 
+        # Describe the intent this judgement is about. On the fallback path
+        # that is the displaced candidate -- per-signal zeroes against OTHER
+        # would explain nothing on precisely the path that most needs
+        # explaining.
+        explained = fallback_from or category
         source_scores = {
-            "llm": llm_scores.get(category, 0.0),
-            "embedding": embedding_scores.get(category, 0.0),
-            "pattern": pattern_scores.get(category, 0.0),
+            "llm": llm_scores.get(explained, 0.0),
+            "embedding": embedding_scores.get(explained, 0.0),
+            "pattern": pattern_scores.get(explained, 0.0),
         }
 
         return Intent(
@@ -411,6 +472,8 @@ class IntentRecognizer:
             source_scores=source_scores,
             urgency=compute_urgency(category, entities, now=moment),
             entities=entities,
+            fallback_from=fallback_from,
+            corroborated=frozenset(llm_scores) | frozenset(pattern_scores),
         )
 
     # -- signals ------------------------------------------------------------
@@ -570,11 +633,64 @@ _LANGUAGES = (
 
 _TOPICS = (
     "quicksort", "mergesort", "binary search", "linked list", "hash table",
-    "red-black tree", "b-tree", "binary tree", "graph traversal", "bfs", "dfs",
+    "red-black tree", "b-tree", "binary search tree", "binary tree",
+    "graph traversal", "bfs", "dfs",
     "dijkstra", "dynamic programming", "recursion", "deadlock", "mutex",
     "semaphore", "virtual memory", "paging", "normalization", "sql index",
     "tcp", "http", "concurrency", "big-o", "heap", "stack", "queue",
 )
+
+
+def _compile_terms(terms: tuple[str, ...]) -> tuple[tuple[re.Pattern[str], str], ...]:
+    """Compile a vocabulary to word-anchored patterns, longest term first.
+
+    Replaces ``term in lowered`` over a declaration-ordered tuple, which had two
+    failure modes and hit both on ordinary messages:
+
+      - **Substring hits.** "algorithm" contains "go" and "frustrated" contains
+        "rust", so every message about algorithms was tagged as Go and every
+        message about being frustrated as Rust -- the latter on exactly the
+        MOTIVATION-intent phrasings where it is most conspicuous. "dequeue"
+        matched "queue" the same way.
+      - **Shadowing by declaration order.** "java" precedes "javascript" and
+        "binary search" precedes "binary tree", so the shorter term claimed
+        messages that plainly meant the longer one.
+
+    ``\\b`` fixes the first: a term must match a word, not a run of letters.
+    Longest-first ordering fixes the second: the most specific term wins, which
+    is why "binary search tree" is now in _TOPICS -- \\b alone still matches
+    "binary search" inside "binary search trees", and the list was simply
+    missing the term that should beat it.
+
+    Terms ending in a word character take an optional plural suffix, so
+    "hash tables" and "mutexes" match while "trees" does not require a second
+    entry. Terms ending in punctuation ("c++", "c#") are anchored on the left
+    only: ``\\b`` after "+" demands a following word character and would reject
+    the very strings it is meant to match.
+
+    Known residual: "go" still matches the English verb ("let's go through
+    this"). Distinguishing that needs a context cue ("in go", "go code"), which
+    belongs with the tools issue that actually consumes ``language``.
+    """
+    compiled: list[tuple[re.Pattern[str], str]] = []
+    for term in sorted(terms, key=lambda item: (-len(item), item)):
+        pattern = r"\b" + re.escape(term)
+        if term[-1].isalnum():
+            pattern += r"(?:e?s)?\b"
+        compiled.append((re.compile(pattern, re.I), term))
+    return tuple(compiled)
+
+
+_LANGUAGE_PATTERNS = _compile_terms(_LANGUAGES)
+_TOPIC_PATTERNS = _compile_terms(_TOPICS)
+
+
+def _first_term(
+    patterns: tuple[tuple[re.Pattern[str], str], ...], message: str
+) -> str | None:
+    """The most specific term present, or None. Patterns are already ordered."""
+    return next((term for pattern, term in patterns if pattern.search(message)), None)
+
 
 _PROBLEM_ID = re.compile(
     r"\b(?:problem|question|exercise|q|lc|leetcode)\s*#?\s*(\d{1,4})\b", re.I
@@ -594,7 +710,7 @@ def extract_entities(message: str, *, now: datetime | None = None) -> dict[str, 
     lowered = message.lower()
     entities: dict[str, Any] = {}
 
-    topic = next((t for t in _TOPICS if t in lowered), None)
+    topic = _first_term(_TOPIC_PATTERNS, message)
     if topic:
         entities["topic"] = topic
 
@@ -609,7 +725,7 @@ def extract_entities(message: str, *, now: datetime | None = None) -> dict[str, 
         if numbered:
             entities["problem_id"] = numbered.group(1)
 
-    language = next((lang for lang in _LANGUAGES if lang in lowered), None)
+    language = _first_term(_LANGUAGE_PATTERNS, message)
     if language:
         entities["language"] = language
 
