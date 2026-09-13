@@ -14,9 +14,17 @@ That last one is the property worth protecting. An escape hatch that needs the
 model is not an escape hatch -- it fails in exactly the incident it exists for.
 ``handle`` is overridden so there is no code path from a handoff to the gateway.
 
-``tool_scope`` names tools that do not exist yet. That is deliberate: the tools
-issue populates a declared scope instead of inventing one, and the FR7 contract
-fails the boot the moment the two disagree.
+``tool_scope`` names come from plan section 3.3, and only the tools that can be
+built without an external service. Two are deliberately absent until the issue
+that gives them something to read:
+
+    materials_search   MCP, not in-process -- it owns the Chroma client
+    get_due_topics     reads Redis progress state, and memory is still a stub
+
+A declared scope naming a tool that cannot work is the same lie as an
+undeclared one, so those entries arrive with their backing store rather than
+ahead of it. The FR7 contract fails the boot the moment scope and registry
+disagree.
 """
 
 from __future__ import annotations
@@ -43,7 +51,7 @@ PROFILES: dict[AgentType, AgentProfile] = {
             "shortest correct explanation, then add one worked example or "
             "analogy. Prefer the course materials over your own recollection."
         ),
-        tool_scope=("search_materials", "get_prerequisites"),
+        tool_scope=("get_prerequisites", "inspect_request_context"),
         effort=_EFFORT,
         max_tokens=1200,
         risk_boundary=(
@@ -58,7 +66,7 @@ PROFILES: dict[AgentType, AgentProfile] = {
             "Ask what they have tried, then give the smallest hint that "
             "unblocks the next step."
         ),
-        tool_scope=("build_hint", "check_step"),
+        tool_scope=("build_hint", "analyze_complexity", "inspect_request_context"),
         effort=_EFFORT,
         max_tokens=1000,
         risk_boundary=(
@@ -76,7 +84,7 @@ PROFILES: dict[AgentType, AgentProfile] = {
             "You build study plans and schedule revision. Be concrete about "
             "what to study, in what order, and on which day."
         ),
-        tool_scope=("schedule_review", "get_progress"),
+        tool_scope=("schedule_review", "inspect_request_context"),
         effort=_EFFORT,
         max_tokens=800,
         risk_boundary=(
@@ -92,7 +100,7 @@ PROFILES: dict[AgentType, AgentProfile] = {
             "understanding rather than recall. Grading explains the gap, not "
             "just the verdict."
         ),
-        tool_scope=("generate_quiz", "grade_answer"),
+        tool_scope=("generate_quiz_spec", "grade_answer", "inspect_request_context"),
         effort=_EFFORT,
         max_tokens=1200,
         risk_boundary=(

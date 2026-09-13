@@ -799,7 +799,8 @@ def test_a_tool_scope_naming_an_unregistered_tool_aborts_the_boot(clean_registry
     echo_tool("something_else")
     with pytest.raises(ContractViolation) as excinfo:
         _check_tool_scopes_resolve()
-    assert "search_materials" in str(excinfo.value)
+    # Names the agent and the tool, so a boot failure says which scope to fix.
+    assert "concept:get_prerequisites" in str(excinfo.value)
 
 
 # -- guard rails still hold -------------------------------------------------
