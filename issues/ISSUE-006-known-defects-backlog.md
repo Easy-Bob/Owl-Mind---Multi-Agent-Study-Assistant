@@ -58,7 +58,7 @@ evidence in production; the housekeeping items are visible the moment anyone loo
 
 ### F2 — The model signal can be truncated away without raising
 
-**Priority P1. Land before ISSUE-005.**
+**Priority P1. Scheduled into ISSUE-008 FR4** -- `/chat` is where it becomes user-visible.
 
 `_llm_signal` requests `max_tokens=400` (`owl_mind/core/intent_recognizer.py:496`) and the
 gateway sends no `thinking` parameter. On `claude-sonnet-5` — the configured default —
@@ -90,7 +90,7 @@ parse failure on well-formed output.
 
 ### F8 — Nothing imposes a deadline
 
-**Priority P1. Land before ISSUE-005.**
+**Priority P1. Scheduled into ISSUE-008 FR5** -- `/chat` fans out to four calls.
 
 There is no `asyncio.timeout` in `recognize()` and none in the gateway, so every call
 inherits the SDK default of **ten minutes**. A hung call holds its request for that long.
