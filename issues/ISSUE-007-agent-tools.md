@@ -85,15 +85,15 @@ so that I can trust a self-test I am not being graded on by a human.
 
 ### FR1 — Correct the drifted tool scopes first
 
-- [ ] Rename to the plan's names: `check_step` -> `analyze_complexity`,
+- [x] Rename to the plan's names: `check_step` -> `analyze_complexity`,
       `generate_quiz` -> `generate_quiz_spec`, `get_progress` -> `get_due_topics`.
-- [ ] Remove `search_materials` from `ConceptAgent.tool_scope`. It is an MCP tool
+- [x] Remove `search_materials` from `ConceptAgent.tool_scope`. It is an MCP tool
       (`materials_search`); the MCP issue adds it back.
-- [ ] Remove `get_due_topics` from `PlannerAgent.tool_scope` **for now** — it reads Redis
+- [x] Remove `get_due_topics` from `PlannerAgent.tool_scope` **for now** — it reads Redis
       progress state and memory is still a stub. The memory issue adds both the tool and
       the scope entry. A declared scope naming a tool that cannot work is the same lie as
       an undeclared one.
-- [ ] Land as the first commit, with no tools registered yet, so the rename is reviewable
+- [x] Land as the first commit, with no tools registered yet, so the rename is reviewable
       against a passing suite rather than tangled with new behaviour.
 
 Resulting scopes after FR1: Concept `(get_prerequisites,)`, Practice
@@ -106,43 +106,43 @@ Each is a pure function of `(request, args)`. No model call, no network, no cloc
 except through an injected value — a tool that calls `datetime.now()` internally cannot be
 tested for the property this issue exists to establish.
 
-- [ ] `get_prerequisites` — static concept graph (red-black tree -> BST -> rotations).
+- [x] `get_prerequisites` — static concept graph (red-black tree -> BST -> rotations).
       Returns the prerequisite chain for a topic, or an empty chain with a reason.
-- [ ] `build_hint` — progressive levels 1-3 over the request's problem context. **Level 3
+- [x] `build_hint` — progressive levels 1-3 over the request's problem context. **Level 3
       is still not the answer** (FR3).
-- [ ] `analyze_complexity` — pattern-based Big-O guidance. **Does not execute code**; it
+- [x] `analyze_complexity` — pattern-based Big-O guidance. **Does not execute code**; it
       recognises shapes (nested loop over the same collection, halving recursion) and names
       the class with its reasoning.
-- [ ] `schedule_review` — SM-2 arithmetic (FR4).
-- [ ] `generate_quiz_spec` — returns the *structure* (topic, count, difficulty mix), not
+- [x] `schedule_review` — SM-2 arithmetic (FR4).
+- [x] `generate_quiz_spec` — returns the *structure* (topic, count, difficulty mix), not
       the questions. The model writes the questions from the spec; the spec is what makes
       two quizzes on the same topic comparable.
-- [ ] `grade_answer` — rubric comparison (FR5).
-- [ ] `create_handoff_summary` — structured TA handoff. See FR6 for why this one is not
+- [x] `grade_answer` — rubric comparison (FR5).
+- [x] `create_handoff_summary` — structured TA handoff. See FR6 for why this one is not
       registered as a model-facing tool.
-- [ ] `inspect_request_context` — retained from the reference implementation; returns what
+- [x] `inspect_request_context` — retained from the reference implementation; returns what
       the agent can see about the current request. Available to every role.
 
 ### FR3 — `build_hint` level 3 is still not the answer
 
-- [ ] Three levels: orient ("what kind of problem is this"), narrow ("which technique"),
+- [x] Three levels: orient ("what kind of problem is this"), narrow ("which technique"),
       concrete ("apply it to *this* input") — and level 3 stops before the result.
-- [ ] A test asserts that for a problem with a known answer, no level's output contains it.
+- [x] A test asserts that for a problem with a known answer, no level's output contains it.
       This is the academic-integrity boundary made structural: with `build_hint` the only
       problem-facing tool in `PracticeAgent.tool_scope`, "never emit a complete solution"
       stops depending on the model's cooperation.
-- [ ] The level is an argument the model chooses, so the escalation is visible in
+- [x] The level is an argument the model chooses, so the escalation is visible in
       `tool_traces` and the monitor can later see a student being walked up the ladder.
 
 ### FR4 — `schedule_review` is SM-2, and takes its clock as an argument
 
-- [ ] Standard SM-2: ease factor, interval, repetition count in; next interval and updated
+- [x] Standard SM-2: ease factor, interval, repetition count in; next interval and updated
       ease out. One correct answer per input.
-- [ ] `now` is an argument, never read inside. The property under test is "the same
+- [x] `now` is an argument, never read inside. The property under test is "the same
       progress always yields the same date", which is untestable against a hidden clock.
-- [ ] A table-driven test over the published SM-2 examples, plus a test that the same input
+- [x] A table-driven test over the published SM-2 examples, plus a test that the same input
       twice yields the identical dict.
-- [ ] Plan §11 lists "SM-2 -> fixed-interval Leitner" as an acceptable simplification under
+- [x] Plan §11 lists "SM-2 -> fixed-interval Leitner" as an acceptable simplification under
       time pressure. If that is taken, say so in the PR — it changes what the tool promises,
       not whether it is deterministic.
 
@@ -151,57 +151,57 @@ tested for the property this issue exists to establish.
 Plan §3.1.1 is explicit that this is **not** fully deterministic, and the issue must not
 claim otherwise:
 
-- [ ] The rubric is written by the model at **question-generation** time and **pinned**.
+- [x] The rubric is written by the model at **question-generation** time and **pinned**.
       It is never regenerated at grading time — regenerating it lets two gradings of the
       same answer disagree, which destroys the only fairness property self-testing has.
-- [ ] The one remaining judgement ("is rubric point N present in this answer?") is
+- [x] The one remaining judgement ("is rubric point N present in this answer?") is
       decomposed into **binary checks**, not a holistic score.
-- [ ] Weights are summed **in code**. The model never returns a total.
-- [ ] A test asserts that identical `(answer, rubric)` input produces an identical mark,
+- [x] Weights are summed **in code**. The model never returns a total.
+- [x] A test asserts that identical `(answer, rubric)` input produces an identical mark,
       given identical binary-check results.
-- [ ] The README and the tool's docstring state the residual: the binary checks are model
+- [x] The README and the tool's docstring state the residual: the binary checks are model
       judgements and can differ between runs. "Stabilised, not deterministic" is the honest
       claim and the one that survives an interview question.
 
 ### FR6 — `create_handoff_summary` is a function, not a registered tool
 
-- [ ] Implement it, and call it from `TutorHandoffAgent.handle` instead of registering it
+- [x] Implement it, and call it from `TutorHandoffAgent.handle` instead of registering it
       in `REGISTRY`.
 - [ ] Rationale to record in the PR: that agent makes no model call, so it has no tool
       loop and nothing to offer a tool *to*. Registering it would put a tool in the registry
       that no payload can ever contain, and would tempt someone to give TutorHandoff a
       `tool_scope` — which is one edit away from giving it a gateway call.
-- [ ] `TutorHandoffAgent.tool_scope` stays empty. A test asserts it.
+- [x] `TutorHandoffAgent.tool_scope` stays empty. A test asserts it.
 
 ### FR7 — Registration, and waking the dormant contract
 
-- [ ] Registration is explicit (`register(AgentToolSpec(...))`), not a decorator scan, so
+- [x] Registration is explicit (`register(AgentToolSpec(...))`), not a decorator scan, so
       the boot-time diff against `tool_scope` stays possible.
-- [ ] Every tool declares a full `input_schema` with `required` and
+- [x] Every tool declares a full `input_schema` with `required` and
       `additionalProperties: false` — the validator built in ISSUE-005 enforces exactly
       that subset, and a tool that omits it silently opts out of validation.
-- [ ] `_check_tool_scopes_resolve` now runs for real. Verify it fails the boot when a scope
+- [x] `_check_tool_scopes_resolve` now runs for real. Verify it fails the boot when a scope
       names a missing tool, with a test that registers a partial set.
-- [ ] Tool names are unique across agents (the third contract listed in
+- [x] Tool names are unique across agents (the third contract listed in
       `core/contracts.py`, still unregistered).
 
 ### FR8 — Traces carry enough for the monitor
 
-- [ ] The existing trace shape (`tool`, `arguments`, `ok`, `error`, `elapsed_ms`) is
+- [x] The existing trace shape (`tool`, `arguments`, `ok`, `error`, `elapsed_ms`) is
       populated for every tool. No change to `BaseAgent` should be needed — if one is, say
       why in the PR rather than editing the loop quietly.
-- [ ] A test asserts a real tool round produces a trace with `ok: True` and a non-zero
+- [x] A test asserts a real tool round produces a trace with `ok: True` and a non-zero
       elapsed time.
 
 ---
 
 ## Non-Functional Requirements
 
-- [ ] The default `pytest` run stays free and offline.
-- [ ] No new runtime dependency. The schema subset validated in ISSUE-005 is deliberate;
+- [x] The default `pytest` run stays free and offline.
+- [x] No new runtime dependency. The schema subset validated in ISSUE-005 is deliberate;
       pulling in `jsonschema` for eight hand-written schemas is not a trade worth making.
-- [ ] Both existing guard rails pass unchanged (one door to the model, ASCII-only source).
-- [ ] No tool reads `os.environ`; configuration comes through `Settings`.
+- [x] Both existing guard rails pass unchanged (one door to the model, ASCII-only source).
+- [x] No tool reads `os.environ`; configuration comes through `Settings`.
 
 ---
 
@@ -275,18 +275,18 @@ then the model receives a validation error as a tool result and the turn still c
 
 ## Definition of Done
 
-- [ ] FR1 merged as its own commit, scopes matching plan §3.3.
-- [ ] Eight tools implemented, registered, and schema-validated.
-- [ ] `build_hint` no-answer property covered by a test.
-- [ ] `schedule_review` table-driven against published SM-2 examples.
-- [ ] `grade_answer` reproducibility tested, and its residual non-determinism documented in
+- [x] FR1 merged as its own commit, scopes matching plan §3.3.
+- [x] Eight tools implemented, registered, and schema-validated.
+- [x] `build_hint` no-answer property covered by a test.
+- [x] `schedule_review` table-driven against published SM-2 examples.
+- [x] `grade_answer` reproducibility tested, and its residual non-determinism documented in
       the docstring and the README.
-- [ ] `create_handoff_summary` called from `TutorHandoffAgent`, not registered; the empty
+- [x] `create_handoff_summary` called from `TutorHandoffAgent`, not registered; the empty
       `tool_scope` asserted.
-- [ ] `_check_tool_scopes_resolve` verified failing on a partial registry.
-- [ ] Tool-name uniqueness contract registered.
-- [ ] `pytest` green, no network calls; `ruff` clean; both guard rails unchanged.
-- [ ] README gains the tool table and what each agent may call.
+- [x] `_check_tool_scopes_resolve` verified failing on a partial registry.
+- [x] Tool-name uniqueness contract registered.
+- [x] `pytest` green, no network calls; `ruff` clean; both guard rails unchanged.
+- [x] README gains the tool table and what each agent may call.
 
 ---
 
