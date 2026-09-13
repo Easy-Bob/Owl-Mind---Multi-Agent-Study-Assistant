@@ -18,6 +18,7 @@ from owl_mind.core.llm_gateway import (
     LLM_CALLS,
     LLM_TOKENS,
     LLMGateway,
+    LLMTimeout,
     TokenUsage,
     UnknownComponent,
 )
@@ -303,3 +304,105 @@ async def test_live_call_against_the_real_api():
         print(f"\nlive call usage: {usage.as_dict()}")
     finally:
         await gateway.aclose()
+
+
+# -- ISSUE-008 FR4: truncation is its own outcome --------------------------
+
+
+async def test_truncated_response_is_counted_apart_from_success(gateway):
+    """ISSUE-006 F2.
+
+    A response cut off at max_tokens is neither a success nor an error: the
+    HTTP call worked and the content is incomplete. Counted as `success` it is
+    invisible -- the caller parses garbage, logs a warning, degrades its
+    signal, and the request still answers. This asserts the third label.
+    """
+    model = get_settings().model
+    gateway._client.response = FakeResponse(stop_reason="max_tokens")
+
+    before_trunc = _counter(
+        LLM_CALLS, component="intent", model=model, outcome="truncated"
+    )
+    before_ok = _counter(LLM_CALLS, component="intent", model=model, outcome="success")
+
+    await gateway.complete(component="intent", max_tokens=400, messages=[])
+
+    assert (
+        _counter(LLM_CALLS, component="intent", model=model, outcome="truncated")
+        == before_trunc + 1
+    )
+    # The point of the label: it must not also land in `success`.
+    assert (
+        _counter(LLM_CALLS, component="intent", model=model, outcome="success")
+        == before_ok
+    )
+
+
+async def test_tokens_are_still_recorded_for_a_truncated_call(gateway):
+    """Truncated output was still generated, and still costs money."""
+    gateway._client.response = FakeResponse(
+        stop_reason="max_tokens", usage=FakeUsage(input_tokens=90, output_tokens=400)
+    )
+    async with gateway.request_scope() as rollup:
+        await gateway.complete(component="intent", max_tokens=400, messages=[])
+    assert rollup.tokens_out == 400
+
+
+# -- ISSUE-008 FR5: the deadline -------------------------------------------
+
+
+async def test_a_slow_call_raises_llm_timeout(gateway):
+    """ISSUE-006 F8. Without this the ceiling is the SDK's ten minutes."""
+    model = get_settings().model
+    gateway._timeout = 0.05
+    gateway._client.delay = 5.0
+
+    before = _counter(LLM_CALLS, component="intent", model=model, outcome="error")
+    with pytest.raises(LLMTimeout):
+        await gateway.complete(component="intent", max_tokens=10, messages=[])
+
+    # A timeout is a failed call and must show up as one; silence here would
+    # make a hung provider look like reduced traffic.
+    assert (
+        _counter(LLM_CALLS, component="intent", model=model, outcome="error")
+        == before + 1
+    )
+
+
+async def test_the_deadline_covers_waiting_for_a_slot(gateway):
+    """The queue half is the half that grows under load.
+
+    The semaphore is per process, so a burst puts callers behind it. A deadline
+    that started only once a slot was held would leave that wait unbounded and
+    report a healthy latency while users waited.
+    """
+    gateway._semaphore = asyncio.Semaphore(1)
+    gateway._timeout = 0.15
+    gateway._client.delay = 0.6
+
+    async def call():
+        return await gateway.complete(component="intent", max_tokens=10, messages=[])
+
+    results = await asyncio.gather(call(), call(), return_exceptions=True)
+    # Both fail: the first on its own call, the second while queued behind it.
+    assert all(isinstance(r, LLMTimeout) for r in results)
+
+
+# -- ISSUE-008: one rollup per request -------------------------------------
+
+
+async def test_nested_scopes_share_one_rollup(gateway):
+    """/chat opens a scope; the orchestrator opens another inside it.
+
+    If the inner scope rebound the contextvar, the outer rollup would hold the
+    intent call alone and every agent that answered the turn would be missing
+    from the reported cost.
+    """
+    async with gateway.request_scope() as outer:
+        await gateway.complete(component="intent", max_tokens=10, messages=[])
+        async with gateway.request_scope() as inner:
+            assert inner is outer
+            await gateway.complete(component="agent:concept", max_tokens=10, messages=[])
+
+    assert outer.llm_calls == 2
+    assert set(outer.by_component) == {"intent", "agent:concept"}

@@ -664,3 +664,29 @@ def test_one_topic_is_reported_and_the_longest_wins():
     """
     entities = extract_entities("how do mutexes differ from semaphores", now=NOW)
     assert entities["topic"] == "semaphore"
+
+
+# -- ISSUE-008 FR4 / ISSUE-006 F2 ------------------------------------------
+
+
+async def test_intent_call_disables_thinking() -> None:
+    """The classifier must not spend its token budget reasoning.
+
+    On the configured model, omitting `thinking` runs *adaptive* thinking, and
+    max_tokens caps thinking and output together. At max_tokens=400 that could
+    spend the budget before the JSON was finished: the parse would fail, this
+    signal would return {} on a call that looked successful, and fusion would
+    quietly renormalise over the two weaker signals. Classification against a
+    fixed taxonomy with a schema-constrained answer has nothing for thinking to
+    improve, so it is switched off rather than budgeted around.
+    """
+    from owl_mind.core.config import get_settings
+    from owl_mind.core.llm_gateway import LLMGateway
+    from tests.fakes import FakeAnthropic
+
+    fake = FakeAnthropic()
+    recognizer = IntentRecognizer(LLMGateway(get_settings(), client=fake), index=None)
+    await recognizer.recognize("explain BFS")
+
+    assert fake.calls, "the intent signal never called the model"
+    assert fake.calls[0]["thinking"] == {"type": "disabled"}

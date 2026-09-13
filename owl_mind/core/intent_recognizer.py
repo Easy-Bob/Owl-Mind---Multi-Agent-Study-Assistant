@@ -494,6 +494,18 @@ class IntentRecognizer:
             response = await self._gateway.complete(
                 component="intent",
                 max_tokens=400,
+                # ISSUE-006 F2. On the configured model, omitting `thinking`
+                # runs *adaptive* thinking, and max_tokens caps thinking and
+                # output together -- so the budget could be spent reasoning,
+                # the JSON cut off mid-object, the parse fail, and this signal
+                # return {} on a request that looked successful.
+                #
+                # Classification against a fixed 19-intent taxonomy with a
+                # schema-constrained answer is not a reasoning task; there is
+                # nothing here for thinking to improve. Disabling it makes the
+                # 400-token budget entirely the model's answer, and removes
+                # latency from the one component on every request's path.
+                thinking={"type": "disabled"},
                 system=_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": message}],
                 output_config={"format": {"type": "json_schema", "schema": _LLM_SCHEMA}},

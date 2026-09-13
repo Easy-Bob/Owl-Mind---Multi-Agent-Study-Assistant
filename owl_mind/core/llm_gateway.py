@@ -188,6 +188,16 @@ class UnknownComponent(ValueError):
     """A call carried a component label that is not in KNOWN_COMPONENTS."""
 
 
+class LLMTimeout(TimeoutError):
+    """A call exceeded ``llm_timeout_seconds`` (ISSUE-006 F8).
+
+    Distinct from ``anthropic.APITimeoutError``, which is the SDK's own
+    per-request timeout and is *retried* by the SDK -- so its effective ceiling
+    is ``timeout x (max_retries + 1)``. This one is a hard deadline enforced
+    with ``asyncio.timeout`` and is not retried by anyone.
+    """
+
+
 class LLMGateway:
     """Single entry point for model calls."""
 
@@ -197,6 +207,7 @@ class LLMGateway:
         # real AsyncAnthropic; constructing it performs no network I/O.
         self._client = client or AsyncAnthropic(api_key=settings.anthropic_api_key)
         self._semaphore = asyncio.Semaphore(settings.llm_max_concurrency)
+        self._timeout = settings.llm_timeout_seconds
 
     async def aclose(self) -> None:
         close = getattr(self._client, "close", None)
@@ -208,7 +219,20 @@ class LLMGateway:
         """Accumulate usage for one request.
 
         Yields the rollup, which is readable after the block exits.
+
+        Nesting reuses the active rollup rather than starting a new one. /chat
+        opens a scope around intent recognition *and* orchestration, and the
+        orchestrator opens one around its own fan-out. Re-binding on the inner
+        scope would hand the agents a fresh rollup and leave the outer one
+        holding the intent call alone -- so a composite turn would report the
+        cost of its classifier and none of the three calls that answered it.
+        One rollup per request, no matter how many layers ask for one.
         """
+        existing = _request_usage.get()
+        if existing is not None:
+            yield existing
+            return
+
         rollup = RequestUsage()
         token = _request_usage.set(rollup)
         try:
@@ -228,6 +252,7 @@ class LLMGateway:
 
         Raises:
             UnknownComponent: before any network call, if the label is unknown.
+            LLMTimeout: the call exceeded ``llm_timeout_seconds``.
             anthropic.APIError: propagated unchanged. The gateway observes
                 failures; it does not decide what to do about them.
         """
@@ -241,11 +266,31 @@ class LLMGateway:
         started = time.monotonic()
 
         try:
-            # The semaphore is held for the API call only. Bookkeeping below
-            # does not need a slot and holding one for it would shrink the
-            # effective concurrency.
-            async with self._semaphore:
-                response = await self._client.messages.create(model=model, **kwargs)
+            # The deadline covers the wait for a slot as well as the call. A
+            # deadline on the call alone would leave queue time unbounded,
+            # which is the half that actually grows under load: the semaphore
+            # is per process, so a burst puts every caller behind it.
+            #
+            # This is deliberately not the SDK's `timeout` parameter. That one
+            # is retried -- wall clock reaches timeout x (max_retries + 1) --
+            # so it cannot state a ceiling. asyncio.timeout can.
+            async with asyncio.timeout(self._timeout):
+                # The semaphore is held for the API call only. Bookkeeping
+                # below does not need a slot and holding one for it would
+                # shrink the effective concurrency.
+                async with self._semaphore:
+                    response = await self._client.messages.create(model=model, **kwargs)
+        except TimeoutError as exc:
+            self._record_error(component, model, started)
+            logger.warning(
+                "llm call timed out after %.1fs: component=%s model=%s",
+                self._timeout,
+                component,
+                model,
+            )
+            raise LLMTimeout(
+                f"{component} exceeded the {self._timeout:.0f}s deadline"
+            ) from exc
         except anthropic.APIStatusError as exc:
             self._record_error(component, model, started)
             logger.warning(
@@ -281,7 +326,25 @@ class LLMGateway:
     ) -> None:
         usage = TokenUsage.from_response(getattr(response, "usage", None))
 
-        LLM_CALLS.labels(component=component, model=model, outcome="success").inc()
+        # A truncated response is a third outcome, not a success and not an
+        # error (ISSUE-006 F2). The HTTP call succeeded; the content is
+        # incomplete. Without this label the failure is invisible: the caller
+        # gets unparseable JSON, logs a warning, and returns an empty signal,
+        # and the request still answers -- just worse, and silently.
+        #
+        # The label set stays closed: stop_reason has a handful of values and
+        # only this one is folded in, so cardinality does not grow with traffic.
+        stop_reason = getattr(response, "stop_reason", None)
+        outcome = "truncated" if stop_reason == "max_tokens" else "success"
+        if outcome == "truncated":
+            logger.warning(
+                "llm response truncated: component=%s model=%s -- raise max_tokens "
+                "or disable thinking for this component",
+                component,
+                model,
+            )
+
+        LLM_CALLS.labels(component=component, model=model, outcome=outcome).inc()
         LLM_LATENCY.labels(component=component).observe(_elapsed_ms(started))
         for direction, amount in (
             ("input", usage.input_tokens),

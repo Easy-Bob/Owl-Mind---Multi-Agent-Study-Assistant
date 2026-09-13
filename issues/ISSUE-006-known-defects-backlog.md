@@ -58,7 +58,10 @@ evidence in production; the housekeeping items are visible the moment anyone loo
 
 ### F2 — The model signal can be truncated away without raising
 
-**Priority P1. Scheduled into ISSUE-008 FR4** -- `/chat` is where it becomes user-visible.
+**RESOLVED in ISSUE-008 FR4.** The intent call now sends `thinking={"type": "disabled"}`,
+so its 400-token budget is entirely the answer, and the gateway counts a response whose
+`stop_reason` is `max_tokens` as `outcome="truncated"` rather than folding it into
+`success`. Verified by a fake carrying that stop reason.
 
 `_llm_signal` requests `max_tokens=400` (`owl_mind/core/intent_recognizer.py:496`) and the
 gateway sends no `thinking` parameter. On `claude-sonnet-5` — the configured default —
@@ -90,7 +93,10 @@ parse failure on well-formed output.
 
 ### F8 — Nothing imposes a deadline
 
-**Priority P1. Scheduled into ISSUE-008 FR5** -- `/chat` fans out to four calls.
+**RESOLVED in ISSUE-008 FR5.** `llm_timeout_seconds` (default 60s) is enforced with
+`asyncio.timeout` around the semaphore acquire *and* the call, so queue time is inside
+the deadline. Deliberately not the SDK's `timeout`, which is retried and therefore
+bounds wall clock at `timeout x (max_retries + 1)` -- a ceiling that cannot be stated.
 
 There is no `asyncio.timeout` in `recognize()` and none in the gateway, so every call
 inherits the SDK default of **ten minutes**. A hung call holds its request for that long.
@@ -198,6 +204,36 @@ broken.
 **Proposed fix.** Reword the comment to name the threshold. Worth noting alongside it that
 Claude Opus 5 halves the minimum to 512 tokens — a model choice flips this without any code
 change, which is the sort of thing that should be written down rather than rediscovered.
+
+---
+
+### F13 — A single pattern rule can outrank the model on the primary agent
+
+**Priority P2. Found in ISSUE-008 while testing composite routing.** Pinned by
+`tests/test_chat.py::test_a_pattern_rule_can_outrank_the_model_on_the_primary`.
+
+On "explain BFS then quiz me" the model ranks `concept_explain` 0.88 over `quiz_request`
+0.74. One pattern rule matches `quiz me` at 0.95; nothing matches the explanation half.
+With the embedding signal absent — the production shape whenever Chroma is down — `_fuse`
+renormalises over llm+pattern (0.65), and:
+
+```text
+quiz_request    (0.5*0.74 + 0.15*0.95) / 0.65 = 0.788
+concept_explain (0.5*0.88 + 0.00     ) / 0.65 = 0.677
+```
+
+A regex at weight 0.15 reversed a 0.14 model gap and took the lead answer. Fan-out is
+unaffected — both agents still run, so the headline multi-agent claim holds — but which
+specialist *leads* a composite reply is being decided by a keyword, on exactly the class
+of request the fan-out exists to serve.
+
+This is the predicted risk in the `WEIGHTS` docstring ("the composite case now separates by
+a much narrower margin") arriving in a stronger form than predicted: not narrowed, reversed.
+
+**Proposed fix.** None yet, deliberately. The question — does the pattern signal deserve
+0.15, or should corroboration gate the *primary* the way it already gates supporting
+agents? — is exactly what the labelled corpus answers. Picking a number now would be
+guessing with extra steps. Belongs to the evaluation issue.
 
 ---
 
