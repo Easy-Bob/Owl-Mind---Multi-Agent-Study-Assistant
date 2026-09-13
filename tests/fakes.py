@@ -30,7 +30,27 @@ class FakeUsage:
 class FakeResponse:
     usage: Any = field(default_factory=FakeUsage)
     content: list[Any] = field(default_factory=list)
+    # The agent tool loop continues only while the model asks for tools, so a
+    # fake that never sets this ends the loop after one round -- which is the
+    # right default for the many tests that do not exercise tools at all.
+    stop_reason: str = "end_turn"
     _request_id: str = "req_fake_0001"
+
+
+@dataclass
+class FakeTextBlock:
+    text: str
+    type: str = "text"
+
+
+@dataclass
+class FakeToolUseBlock:
+    """Mirrors a tool_use content block: id, name, and parsed input."""
+
+    name: str
+    input: dict[str, Any] = field(default_factory=dict)
+    id: str = "toolu_fake_0001"
+    type: str = "tool_use"
 
 
 class _FakeMessages:
@@ -52,7 +72,8 @@ class _FakeMessages:
                 await asyncio.sleep(0)
             if owner.raises is not None:
                 raise owner.raises
-            return owner.response
+            picker = getattr(owner, "next_response", None)
+            return picker() if picker is not None else owner.response
         finally:
             owner.in_flight -= 1
 
@@ -77,3 +98,21 @@ class FakeAnthropic:
 
     async def close(self) -> None:
         self.closed = True
+
+
+class ScriptedAnthropic(FakeAnthropic):
+    """Returns a different response per call, so a tool loop can be scripted.
+
+    The single-response FakeAnthropic cannot express "ask for a tool, then
+    answer": it would ask for the same tool forever and the loop would only
+    ever exit by exhaustion.
+    """
+
+    def __init__(self, responses: list[Any], delay: float = 0.0) -> None:
+        super().__init__(response=responses[0], delay=delay)
+        self._responses = list(responses)
+
+    def next_response(self) -> Any:
+        if len(self._responses) > 1:
+            return self._responses.pop(0)
+        return self._responses[0]

@@ -21,10 +21,13 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from owl_mind import __version__
 
-# intent_recognizer is imported for its side effect: it registers the taxonomy
-# startup contract. Without the import the check is never registered, and
-# taxonomy drift would surface as a confusing request-time failure rather than
-# a failed boot.
+# Imported for their side effect: each registers startup contracts. Without the
+# import the check is never registered, and drift surfaces as a confusing
+# request-time failure rather than a failed boot. Note the sharp edge recorded
+# as ISSUE-006 H2 -- a contract that was never imported is indistinguishable
+# from one that passed, because nothing asserts how many should be registered.
+from owl_mind.agents import roster  # noqa: F401
+from owl_mind.agents.orchestrator import AgentOrchestrator
 from owl_mind.core import intent_recognizer  # noqa: F401
 from owl_mind.core.config import Settings, load_settings_or_exit
 from owl_mind.core.contracts import registered_contracts, verify_startup_contracts
@@ -84,14 +87,17 @@ async def check_chroma(settings: Settings) -> dict[str, Any]:
         return {"reachable": False, "detail": f"{type(exc).__name__}: {exc}"}
 
 
-def registered_agents() -> list[str]:
+def registered_agents(app: FastAPI) -> list[str]:
     """Names of agents registered in the orchestrator pool.
 
-    Empty until the agent issue lands. This reports what is *running*, not what
-    is declared in ``AgentType`` -- a type with no instance cannot take a
-    request, and /health should not imply otherwise.
+    Reports what is *running*, not what is declared in ``AgentType`` -- a type
+    with no instance cannot take a request, and /health should not imply
+    otherwise. Read from the live pool rather than duplicated here: a hardcoded
+    list would contradict the FR7 contract the moment the two disagreed, and
+    /health is exactly where that lie would be believed (ISSUE-006 H1).
     """
-    return []
+    orchestrator: AgentOrchestrator | None = getattr(app.state, "orchestrator", None)
+    return [] if orchestrator is None else orchestrator.registered_agents()
 
 
 @asynccontextmanager
@@ -109,6 +115,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # no network I/O, so a misconfigured key still fails at call time with the
     # provider's own error rather than here.
     app.state.gateway = LLMGateway(settings)
+    # One orchestrator, holding one instance per agent type. Constructed after
+    # the contracts have verified the roster is complete, so a missing role is
+    # a failed boot rather than a KeyError on the first request that needs it.
+    app.state.orchestrator = AgentOrchestrator(app.state.gateway)
 
     logger.info(
         "Owl Mind %s starting (env=%s, model=%s)",
@@ -148,7 +158,7 @@ def create_app() -> FastAPI:
             "status": "ok" if healthy else "degraded",
             "app_env": settings.app_env,
             "version": __version__,
-            "agents": registered_agents(),
+            "agents": registered_agents(app),
             "contracts": registered_contracts(),
             "dependencies": dependencies,
         }

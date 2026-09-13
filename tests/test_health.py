@@ -30,12 +30,17 @@ def test_health_reports_structure(client):
     assert set(body["dependencies"]) == {"redis", "chroma"}
 
 
-def test_health_reports_no_agents_before_the_agent_issue(client):
-    """The roster is empty until agents are registered in the pool.
+def test_health_reports_the_live_roster(client):
+    """/health reports what is running, not what is declared in AgentType.
 
-    /health reports what is running, not what is declared in AgentType.
+    Read from the orchestrator's pool rather than a literal, so this cannot
+    drift from the FR7 startup contract. Before ISSUE-005 this asserted an
+    empty list, which was true then and is the reason the assertion exists.
     """
-    assert client.get("/health").json()["agents"] == []
+    from owl_mind.agents.base import AgentType
+
+    agents = client.get("/health").json()["agents"]
+    assert sorted(agents) == sorted(agent.value for agent in AgentType)
 
 
 @pytest.mark.parametrize("broken", ["redis", "chroma"])
