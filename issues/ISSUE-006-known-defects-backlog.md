@@ -220,6 +220,18 @@ imported is indistinguishable from a contract that passed.** `verify_startup_con
 logs "N registered" and nothing asserts what N should be. An explicit `contracts.load_all()`,
 or a test pinning the expected count, closes it.
 
+### H6 — `tool_scope` names drifted from the plan's tool table
+
+ISSUE-005 declared `tool_scope` early so the tools issue would "populate a declared scope
+rather than invent one". Four of the eight entries do not match plan §3.3:
+`check_step` and `get_progress` are invented, `generate_quiz` should be
+`generate_quiz_spec` (a spec, not the questions), and `search_materials` is an **MCP**
+tool that does not belong in an in-process scope at all. Recorded here because the FR7
+contract is dormant while the registry is empty, so nothing currently catches it.
+
+**Fixed by ISSUE-007 FR1**, as its first commit. Listed anyway: if that issue is
+descoped, the drift outlives it.
+
 ### H3 — `MAX_AGENTS` is a routing constant living in the classifier
 
 `owl_mind/core/intent_recognizer.py:261`. `supporting_candidates()` does not apply it;
