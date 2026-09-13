@@ -91,72 +91,31 @@ same value for every role until the eval corpus can justify differentiating them
 — it is a cost/quality dial, not a randomness dial, and transcribing the old
 temperatures into effort levels would invent a mapping that does not exist.
 
-### 3.1.1 GradingAgent — a sixth role, deliberately after v1
+### 3.1.1 QuizAgent's rubric is model-authored — and that is a deliberate limit
 
-The roster keeps **both** QuizAgent and GradingAgent. They share `grade_answer`
-and differ in everything that matters:
+`grade_answer` compares a student's free-text answer against a rubric. That rubric is
+**written by the model at question-generation time and pinned**, never regenerated at
+grading time — regenerating it would let two gradings of the same answer disagree, which
+destroys the one fairness property self-testing needs.
 
-| | QuizAgent (v1) | GradingAgent (v2) |
-|---|---|---|
-| User | the student | a TA or instructor |
-| Input | answers to questions the system authored | real submissions by other people |
-| **Rubric provenance** | **model-authored, pinned at question-generation time** | **instructor-authored; the agent never authors the standard it grades against** |
-| May reveal solutions | no | yes |
-| Authority | informational | **proposes a draft; a human approves** |
-| Failure cost | one bad correction, student moves on | a wrong mark on a transcript |
+The honest limitation: a model-authored rubric can be **wrong** — a missing point, or one
+that is not actually required. For self-study that is acceptable. The student gets one bad
+correction, notices, and moves on; the stakes absorb it.
 
-**Rubric provenance is the line between them.** A self-test can be graded against
-a rubric the model wrote, because the stakes absorb the occasional bad rubric. Real
-grading cannot: a model grading against its own belief has no external anchor, no
-appeal artifact, and no guarantee that two identical submissions score the same.
-GradingAgent may *draft* a rubric as a separate, human-approved step before a batch
-begins — never at grading time.
-
-That difference is a permission difference, not a topic difference, which is why it
-is a second agent rather than a flag on the first.
-
-**Why it is out of v1 scope.** GradingAgent introduces a second class of user, and
-with it the first authorization requirement in the system: the same question
-("what is the answer to Q3") must be refused for a student and answered for a TA.
-Routing currently keys on intent alone and there is no authentication at all.
-Adding user-role routing, a human-in-the-loop approval step, and an audit trail
-(rubric version, model id, timestamp, approver) is real work that does not fit
-alongside the four-day plan.
-
-Shipping it second is also the better story: v1 argues the roster is extensible,
-and GradingAgent is the extension — a new permission profile reusing `grade_answer`
-unchanged, with role-based routing as the single new architectural piece.
-
-**Two properties it must have that v1 does not:**
-
-- **Fairness is testable.** Grade the same submission twice: byte-identical output.
-  Shuffle a batch and regrade: scores do not move. Batch-position drift is a real
-  failure mode in model grading and a measurable one.
-- **Evaluation gets ground truth.** Agreement with human graders (Cohen's kappa,
-  mean absolute error against the TA's score) is an objective metric on a real
-  task — a stronger measurement story than the LLM-judge scores v1 relies on.
-
-Privacy note: student submissions are educational records. Anything deployed for
-real use needs a decision about what may leave the institution and what is retained.
-
-`PracticeAgent`'s no-solutions rule is the structural twin of `BillingAgent`'s
-"never promise a refund": same enforcement pattern (`AgentProfile.output_contract`
-+ role packet `risk_boundary` + a deterministic eval assertion), new domain.
-
-`TutorHandoffAgent` keeps the existing `EscalationAgent` design — overriding
-`handle()` to skip the LLM entirely, so the escape hatch is instant, free, and
-functional even during a total model outage.
+That tolerance is exactly why Owl Mind is **student-facing only**. Grading real assignments
+would require an instructor-authored rubric, a human approval step, an audit trail, and a
+second class of user with its own permissions — a different product, not a flag on this one.
 
 ### 3.2 Intent taxonomy
 
-16 intents in 5 groups. Replaces the current customer-service set entirely.
+19 intents in 5 groups. Replaces the current customer-service set entirely.
 
 | Group | Intents |
 |---|---|
 | `LEARN` | `concept_explain`, `concept_compare`, `material_search` |
 | `PRACTICE` | `problem_help`, `homework_check`, `code_review`, `complexity_analysis` |
 | `PLAN` | `study_plan`, `progress_query`, `deadline` |
-| `ASSESS` | `quiz_request` |
+| `ASSESS` | `quiz_request`, `answer_submission`, `mock_exam`, `explain_back` |
 | `SUPPORT` | `motivation`, `human_tutor`, `greeting`, `feedback`, `other` |
 
 Group → primary agent: `LEARN`→Concept, `PRACTICE`→Practice, `PLAN`→Planner,
@@ -164,6 +123,28 @@ Group → primary agent: `LEARN`→Concept, `PRACTICE`→Practice, `PLAN`→Plan
 
 The three-way fusion (LLM 0.7 / embedding 0.2 / pattern 0.1) and the
 specific-over-generic refinement are kept as-is — only the vocabulary changes.
+
+**One change to the fusion's output, and it is load-bearing.** Each signal returns
+its top candidates with scores, and the vote sums across all of them, producing a
+distribution over intents rather than a winner. The reference implementation
+collapsed each signal to a single label *before* voting, so its score map held at
+most three entries; a composite request could then only be detected downstream, by
+keyword hits on the lowest-weighted signal. The LLM — weighted 0.7 — read the second
+half of the request and threw it away.
+
+**Fan-out rule: at most 3 agents per request** (one primary, up to two supporting),
+selected from the intent distribution by an absolute floor. The relative gate from
+the reference implementation (`score >= 0.55 * primary`) is dropped: on a real
+two-domain message it left the second agent qualifying by hundredths, so one fewer
+keyword hit silently dropped half of what the student asked. With a hard cap the cap
+does the limiting.
+
+Three is the ceiling because three agents at up to three tool rounds each, plus the
+composer, is already about ten model calls for one request — and it consumes three of
+the gateway's eight concurrency slots, so two simultaneous fan-outs saturate the
+process. Merging four independent answers also produces mush; the composer is the
+binding constraint, not the budget. `TutorHandoffAgent` is exempt — escalation
+short-circuits before scoring and is never a fan-out participant.
 
 **Add a boot-time assertion** that every `IntentCategory` member appears in
 `_TEMPLATES` and `_INTENT_GROUPS`, so taxonomy drift fails at startup rather than
@@ -382,8 +363,8 @@ what make everything else verifiable.
 
 Authentication, response streaming, load testing, human-calibrated LLM-judge,
 multi-worker state externalisation, a second MCP server for progress data,
-sandboxed code execution, **GradingAgent and the user-role routing it needs**
-(see 3.1.1). Each is real work; none fits alongside the above in four
+sandboxed code execution, and anything requiring a second class of user
+(TA/instructor tooling, role-based routing — see 3.1.1). Each is real work; none fits alongside the above in four
 days.
 
 **Sandboxed code execution is the obvious next MCP server** and the natural Day-5+

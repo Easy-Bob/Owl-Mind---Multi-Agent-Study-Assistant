@@ -149,11 +149,11 @@ All checks passed!            # ruff
 
 ## Decisions for the reviewer
 
-**1. This branch contains a change that does not belong to the issue.** The second commit
-adds plan section 3.1.1 (keeping both QuizAgent and GradingAgent, scoping grading to v2).
-That is a roster decision, not part of the gateway. SOP section 18.1 explicitly asks
-reviewers to catch this. It is documentation-only and zero-risk, but say the word and I
-will split it onto its own branch.
+**1. This branch contains changes that do not belong to the issue.** Two later commits
+edit plan section 3.1.1 (QuizAgent's rubric provenance) and section 3.2 (the 3-agent
+fan-out rule). Both are design decisions, not part of the gateway. SOP section 18.1
+explicitly asks reviewers to catch this. They are documentation-only and zero-risk, but
+say the word and I will split them onto their own branch.
 
 **2. `effort` is the same value for every role, on purpose.** Effort is a cost/quality
 dial; temperature was a randomness dial. There is no mapping between them, so
@@ -166,8 +166,8 @@ grading deterministic. For free-text answers it cannot -- deciding whether a rub
 is present is model judgement. What the rubric actually buys is *decomposition*: one
 holistic score becomes several binary checks plus arithmetic in code, which is far more
 stable but not deterministic. The plan now says so. This matters because it is exactly
-the reason GradingAgent needs an instructor-authored rubric rather than a model-authored
-one.
+the reason Owl Mind stays student-facing: a model-authored rubric is tolerable for
+self-testing and not for grading real work.
 
 **4. The gather test is the one not to skip.** If the contextvar stops propagating into
 gathered tasks, token totals are simply low and **nothing raises**. Parallel agent
