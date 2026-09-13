@@ -52,3 +52,17 @@ def register(spec: AgentToolSpec) -> AgentToolSpec:
 def get(name: str) -> AgentToolSpec:
     """Look up a tool by name."""
     return REGISTRY[name]
+
+
+# Imported last, for their registration side effect. They import `register` and
+# `AgentToolSpec` from this module, so the definitions above must already exist
+# -- which is why this sits at the bottom rather than with the other imports.
+# Adding a module here is what puts its tools in the registry; the FR7 contract
+# fails the boot if a profile claims a tool no module registered.
+from owl_mind.agents.tools import (  # noqa: E402,F401
+    concept,
+    planner,
+    practice,
+    quiz,
+    shared,
+)

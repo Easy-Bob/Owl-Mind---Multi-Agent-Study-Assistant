@@ -58,7 +58,7 @@ evidence in production; the housekeeping items are visible the moment anyone loo
 
 ### F2 — The model signal can be truncated away without raising
 
-**Priority P1. Land before ISSUE-005.**
+**Priority P1. Scheduled into ISSUE-008 FR4** -- `/chat` is where it becomes user-visible.
 
 `_llm_signal` requests `max_tokens=400` (`owl_mind/core/intent_recognizer.py:496`) and the
 gateway sends no `thinking` parameter. On `claude-sonnet-5` — the configured default —
@@ -90,7 +90,7 @@ parse failure on well-formed output.
 
 ### F8 — Nothing imposes a deadline
 
-**Priority P1. Land before ISSUE-005.**
+**Priority P1. Scheduled into ISSUE-008 FR5** -- `/chat` fans out to four calls.
 
 There is no `asyncio.timeout` in `recognize()` and none in the gateway, so every call
 inherits the SDK default of **ten minutes**. A hung call holds its request for that long.
@@ -219,6 +219,18 @@ ISSUE-005 FR7 adds two more from `agents/`. The deeper problem: **a contract tha
 imported is indistinguishable from a contract that passed.** `verify_startup_contracts()`
 logs "N registered" and nothing asserts what N should be. An explicit `contracts.load_all()`,
 or a test pinning the expected count, closes it.
+
+### H6 — `tool_scope` names drifted from the plan's tool table
+
+ISSUE-005 declared `tool_scope` early so the tools issue would "populate a declared scope
+rather than invent one". Four of the eight entries do not match plan §3.3:
+`check_step` and `get_progress` are invented, `generate_quiz` should be
+`generate_quiz_spec` (a spec, not the questions), and `search_materials` is an **MCP**
+tool that does not belong in an in-process scope at all. Recorded here because the FR7
+contract is dormant while the registry is empty, so nothing currently catches it.
+
+**Fixed by ISSUE-007 FR1**, as its first commit. Listed anyway: if that issue is
+descoped, the drift outlives it.
 
 ### H3 — `MAX_AGENTS` is a routing constant living in the classifier
 

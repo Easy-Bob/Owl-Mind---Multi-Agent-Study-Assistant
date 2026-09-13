@@ -14,6 +14,36 @@ layer, with real Model Context Protocol tool access and end-to-end token account
 Every split is justified by a capability boundary, not a topic: each agent is forbidden
 something another is allowed, and the whitelist enforces it before the model is called.
 
+## What each agent may call
+
+Tools are the layer the roster's guarantees actually rest on. `tool_scope` is applied when
+the request payload is built, so a tool outside it is absent from the request rather than
+discouraged in a prompt.
+
+| Tool | Who may call it | What it guarantees |
+| --- | --- | --- |
+| `get_prerequisites` | Concept | Static graph. An unknown topic returns `known: false` rather than an invented chain |
+| `build_hint` | Practice | Every hint comes from an authored table. **No level is the solution**, and there is no level 4 |
+| `analyze_complexity` | Practice | Reads the shape of the source. **Never executes it**; the caveat travels in the result |
+| `schedule_review` | Planner | SM-2 arithmetic with the clock as an argument. Same progress, same date, always |
+| `generate_quiz_spec` | Quiz | The shape of a quiz, not its questions -- what makes two quizzes on a topic comparable |
+| `grade_answer` | Quiz | Weights summed in code. See the caveat below |
+| `inspect_request_context` | all four | Reports identifiers as present or absent, never by value |
+
+`create_handoff_summary` is deliberately **not** a registered tool. TutorHandoffAgent makes
+no model call, so it has no tool loop to offer one to -- and a `tool_scope` on that role
+would be one edit away from a gateway call.
+
+**Grading is stabilised, not deterministic.** The arithmetic is exact and the rubric is
+pinned at question-generation time and fingerprinted, so a rubric regenerated at grading
+time is detectable. But the per-rubric-point judgements are model judgements and can differ
+between runs. `grade_answer` reports that residual in its own result rather than letting a
+caller mistake it for arithmetic.
+
+Two tools named in the plan are absent until they have something to read: `materials_search`
+(MCP -- it owns the Chroma client) and `get_due_topics` (Redis progress state). A declared
+scope naming a tool that cannot work is the same lie as an undeclared one.
+
 ## Status
 
 **Routing works end to end.** Intent recognition and the five agents are implemented and
@@ -73,7 +103,7 @@ owl_mind/
 │   ├── roster.py            the five profiles and their implementations
 │   ├── orchestrator.py      routing decision, parallel dispatch, degradation
 │   ├── composer.py          merges several agent answers into one reply
-│   └── tools/               in-process tools over request state           [stub]
+│   └── tools/               deterministic (request, args) -> dict tools
 ├── memory/                  working / episodic / profile layers           [stub]
 ├── toolkit/                 MCP client policy + materials store           [stub]
 ├── mcp_servers/             MCP server processes                          [empty]
