@@ -484,3 +484,183 @@ def test_intent_is_frozen():
     intent = Intent(category=IntentCategory.GREETING, group=IntentGroup.SUPPORT, confidence=1.0)
     with pytest.raises(dataclasses.FrozenInstanceError):
         intent.category = IntentCategory.OTHER  # type: ignore[misc]
+
+
+# -- ISSUE-005 pre-work: the three contracts routing depends on -------------
+#
+# These pin decisions taken before the orchestrator was written. Each one
+# changes what routing does, so each is asserted on the Intent rather than
+# left to the orchestrator to rediscover.
+
+
+async def test_embedding_similarity_alone_cannot_promote_an_agent():
+    """The cost gate: index noise must not buy a second agent.
+
+    concept_compare here has no model support at all -- only a plausible
+    cosine similarity against a short template. It clears SUPPORTING_FLOOR on
+    the fused score (0.35 * 0.62 / 0.85 = 0.255) and would otherwise become a
+    supporting agent, which also forces the composer call that merging two
+    answers requires: two extra model calls on a single-intent request.
+    """
+    rec = recognizer(
+        llm_reply(concept_explain=0.95),
+        index=FakeIndex(
+            {IntentCategory.CONCEPT_EXPLAIN: 0.8, IntentCategory.CONCEPT_COMPARE: 0.62}
+        ),
+    )
+    intent = await rec.recognize("how does quicksort partitioning work", now=NOW)
+
+    assert intent.category is IntentCategory.CONCEPT_EXPLAIN
+    # The evidence is still recorded -- it is the suppression that is asserted,
+    # not the absence of the score.
+    assert intent.scores[IntentCategory.CONCEPT_COMPARE] >= SUPPORTING_FLOOR
+    assert IntentCategory.CONCEPT_COMPARE not in intent.corroborated
+    assert intent.supporting_candidates() == []
+
+
+async def test_a_pattern_rule_corroborates_even_when_the_model_misses_it():
+    """Patterns exist for precision, so they corroborate; embeddings do not.
+
+    "quiz me" is an unmistakable phrasing. The rule that exists exactly for
+    that case counts as evidence a second request was made, whereas surface
+    similarity to a template does not.
+    """
+    rec = recognizer(llm_reply(concept_explain=0.9), index=FakeIndex({}))
+    intent = await rec.recognize("explain BFS and then quiz me on it", now=NOW)
+
+    assert intent.category is IntentCategory.CONCEPT_EXPLAIN
+    assert IntentCategory.QUIZ_REQUEST in intent.corroborated
+
+
+def test_the_pattern_signal_cannot_reach_the_supporting_floor_alone():
+    """A limit of the current weights, pinned so ISSUE-004 tunes against it.
+
+    At weight 0.15 the pattern signal's ceiling is 0.15/(0.5+0.15) = 0.2308
+    when the model also votes, and 0.15 when all three do -- both under
+    SUPPORTING_FLOOR. So a pattern rule can move the *primary* but can never
+    add a second agent on its own: composite routing rests entirely on the
+    model returning both intents. Promoting a lone pattern hit would need its
+    weight raised to about 0.217.
+
+    The corroboration gate in supporting_candidates() therefore admits pattern
+    hits that cannot currently arrive. That is deliberate -- the gate encodes
+    which signals count as evidence, and stays correct if the weights move.
+    """
+    ceiling = WEIGHTS["pattern"] / (WEIGHTS["llm"] + WEIGHTS["pattern"])
+    assert ceiling < SUPPORTING_FLOOR
+
+    fused = _fuse(
+        {
+            "llm": {IntentCategory.CONCEPT_EXPLAIN: 0.9},
+            "embedding": {},
+            "pattern": {IntentCategory.QUIZ_REQUEST: 1.0},
+        }
+    )
+    assert fused[IntentCategory.QUIZ_REQUEST] < SUPPORTING_FLOOR
+
+
+async def test_low_confidence_other_records_what_it_displaced():
+    """"Evidence below bar": something was asked, the panel disagreed.
+
+    The orchestrator asks which candidate was meant, so the candidate and its
+    per-signal scores have to survive. Reporting the displaced score against
+    OTHER described neither intent.
+    """
+    rec = recognizer(llm_reply(concept_explain=0.25), index=FakeIndex({}))
+    intent = await rec.recognize("mmm something about trees maybe", now=NOW)
+
+    assert intent.category is IntentCategory.OTHER
+    assert intent.is_fallback
+    assert intent.fallback_from is IntentCategory.CONCEPT_EXPLAIN
+    # confidence describes `category`, and OTHER was never scored.
+    assert intent.confidence == 0.0
+    # source_scores describes the displaced candidate, not OTHER.
+    assert intent.source_scores["llm"] == pytest.approx(0.25)
+    # The distribution survives for the clarifying question.
+    assert intent.scores[IntentCategory.CONCEPT_EXPLAIN] > 0
+
+
+async def test_confident_other_is_not_a_fallback():
+    """"No relevant intent": the model classified the message as off-topic.
+
+    Routing declines this; it asks a clarifying question for the fallback
+    above. Collapsing the two loses the distinction.
+    """
+    rec = recognizer(llm_reply(other=0.95), index=FakeIndex({}))
+    intent = await rec.recognize("what is the weather like", now=NOW)
+
+    assert intent.category is IntentCategory.OTHER
+    assert not intent.is_fallback
+    assert intent.fallback_from is None
+    assert intent.confidence >= PRIMARY_THRESHOLD
+
+
+async def test_no_signal_returns_anything_is_not_a_fallback():
+    """Every signal silent is absence of evidence, not ambiguous evidence."""
+    from owl_mind.core.config import get_settings
+
+    gateway = LLMGateway(get_settings(), client=FakeAnthropic(raises=RuntimeError("down")))
+    rec = IntentRecognizer(gateway, index=FakeIndex({}))
+    intent = await rec.recognize("zzzzz", now=NOW)
+
+    assert intent.category is IntentCategory.OTHER
+    assert not intent.is_fallback
+    assert intent.scores == {}
+    assert intent.supporting_candidates() == []
+
+
+async def test_an_intent_too_weak_to_lead_is_too_weak_to_support():
+    rec = recognizer(
+        llm_reply(concept_explain=0.3, quiz_request=0.3), index=FakeIndex({})
+    )
+    intent = await rec.recognize("unclear", now=NOW)
+
+    assert intent.is_fallback
+    assert intent.supporting_candidates() == []
+
+
+# -- FR8 regression: substring and declaration-order matching ---------------
+
+
+@pytest.mark.parametrize(
+    ("message", "key", "absent"),
+    [
+        # "al-go-rithm" tagged every algorithm question as Go.
+        ("explain the algorithm behind quicksort", "language", "go"),
+        # "f-rust-rated" tagged the MOTIVATION phrasings as Rust.
+        ("I am so frustrated with this recursion problem", "language", "rust"),
+        # "de-queue" matched queue.
+        ("how do I dequeue from a linked list", "topic", "queue"),
+    ],
+)
+def test_substrings_are_not_entities(message: str, key: str, absent: str):
+    assert extract_entities(message, now=NOW).get(key) != absent
+
+
+@pytest.mark.parametrize(
+    ("message", "key", "expected"),
+    [
+        # "java" is declared before "javascript"; longest match must win.
+        ("why does my javascript closure not work", "language", "javascript"),
+        # "binary search" is declared before the tree topics.
+        ("explain binary search trees to me", "topic", "binary search tree"),
+        # Plurals resolve to the singular term.
+        ("quiz me on hash tables", "topic", "hash table"),
+        ("how do mutexes work", "topic", "mutex"),
+    ],
+)
+def test_the_most_specific_term_wins(message: str, key: str, expected: str):
+    assert extract_entities(message, now=NOW)[key] == expected
+
+
+def test_one_topic_is_reported_and_the_longest_wins():
+    """A known limit, pinned rather than left incidental.
+
+    ``topic`` is singular, so a message naming two topics reports one of them,
+    and longest-first ordering picks the longer term -- not the one the student
+    is actually asking about. This is no worse than the declaration-order
+    behaviour it replaced, but it is still arbitrary. Whoever consumes ``topic``
+    as a tool argument should decide whether to return all matches.
+    """
+    entities = extract_entities("how do mutexes differ from semaphores", now=NOW)
+    assert entities["topic"] == "semaphore"
