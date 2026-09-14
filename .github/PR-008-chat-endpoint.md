@@ -11,7 +11,9 @@ into user-visible: **F2** (the model signal can be truncated away without raisin
 **F8** (nothing imposes a deadline).
 
 Everything built in the four issues before this one has only ever been called by a fake.
-This is where it becomes reachable.
+This is where it becomes reachable — and, as it turned out, where two latency bugs became
+visible for the first time, because printing a real response body is not the same thing as
+asserting a type in a test.
 
 ## Linked Issue
 
@@ -175,9 +177,55 @@ Filed as **ISSUE-006 F13** and pinned by
 rather than stumbled into. The fan-out test was loosened to assert the agent *set*, so a
 future weight change fails in the place that explains why.
 
+## Two latency bugs, found by printing a response instead of trusting a test
+
+Neither of these was caught by the suite, and the reason is worth more than the fixes: the
+existing assertion was `isinstance(latency_ms, float)`, and **`0.0` is a float**. A test
+that checks a type passes on a wrong value forever.
+
+**The first is mine, introduced in this PR.** `/chat` surfaced `result.latency_ms`, and the
+orchestrator's clock starts *after* intent recognition — so the field excluded a model call
+that sits on every request's critical path. On the two paths that dispatch no agent, that
+call is the entire turn, and the endpoint reported **0.0 ms for a request that cost money**.
+A client reading the field would conclude the escape hatch was free. Now timed in the
+handler, covering recognition and orchestration together.
+
+**The second is older, wider, and was hiding the first.** After that fix it still read 0.0.
+Every elapsed-time measurement in the project used `time.monotonic()`:
+
+```text
+monotonic    resolution: 0.015625     # 15.625 ms
+perf_counter resolution: 1e-07        # 0.1 us
+```
+
+Anything faster than one Windows timer tick measured as exactly `0.0` or `16.0`, which is
+also why a 4.9 ms operation reported as 16.0 ms. The quantisation reached `llm_latency_ms`
+and — the part that actually matters — the `AgentStats` averages that `routing_score`
+reads. Once the instance pool lands, selection would have been comparing latencies rounded
+to 15.6 ms buckets: noise, presented as a measurement.
+
+Replaced with `perf_counter` in the gateway, base, orchestrator, and chat. `perf_counter`
+is the correct primitive for measuring a duration; `monotonic` is for coarse deadlines,
+which is what the F8 timeout above still uses, correctly.
+
+**This was invisible on Linux**, where `monotonic` is nanosecond-resolution — so it only
+ever manifested in dev, which is exactly why it survived four issues and a test suite.
+
+Verified against real response bodies. Before: `0.0`, `16.0`, `0.0`, `0.0`. After:
+
+```text
+single intent   1.15 ms   (2 calls)
+composite       5.29 ms   (4 calls)
+off topic       0.80 ms   (1 call)
+tutor handoff   1.31 ms   (1 call)
+```
+
+A regression test now asserts `latency_ms > 0.0` on the handoff path — the case where the
+old code was most confidently wrong.
+
 ## Testing
 
-- [x] `pytest` -- **238 passed, 1 skipped, 2 deselected**.
+- [x] `pytest` -- **239 passed, 1 skipped, 2 deselected**.
 - [x] `ruff check .` -- clean.
 - [x] Both guard rails unchanged and passing.
 - [x] `/chat` present in the OpenAPI document with both schemas (output above).
@@ -201,6 +249,32 @@ Evidence for the attribution claim, which is the one this PR most needs to hold:
 assert set(components) == {"intent", "agent:concept", "agent:quiz", "composer"}
 assert body["usage"]["llm_calls"] == 4
 ```
+
+And the whole thing end to end, as the endpoint actually answers it today (the prose is the
+fake's; the routing, fusion, fan-out and attribution are real):
+
+```json
+{
+  "response": "Here is an answer.",
+  "primary_agent": "quiz",
+  "supporting_agents": ["concept"],
+  "escalated": false,
+  "latency_ms": 5.29,
+  "routing_reason": "primary=quiz supporting=concept intent=quiz_request scores=[quiz_request=0.788, concept_explain=0.677]",
+  "usage": {
+    "llm_calls": 4,
+    "tokens_in": 720,
+    "tokens_out": 270,
+    "tokens_by_component": {
+      "intent": 150, "agent:quiz": 280, "agent:concept": 280, "composer": 280
+    }
+  }
+}
+```
+
+Note that `routing_reason` shows F13 happening in the open: the score vector that put a
+keyword match ahead of the model is right there in the response, which is the entire reason
+the field exists.
 
 ## Deployment Notes
 
@@ -228,6 +302,12 @@ assert body["usage"]["llm_calls"] == 4
   default, but `.env` holds a placeholder key. It is the first test in this repository that
   could fail for a reason the fakes cannot produce — content-block shapes, real
   `stop_reason` values, actual latency — so it should be run before merge, not after.
+
+  The latency bugs above sharpen the argument. Both survived a green suite because the
+  assertions checked shape rather than value, and both were found the moment something
+  real was printed. The fakes return well-formed blocks and `end_turn` because that is what
+  they were taught to return; the live test is the only thing in this repository that can
+  disagree with its own author. It costs a few cents.
 - **Memory.** `session_id` is accepted, echoed, and inert; a test asserts it does not reach
   the model, so the field's inertness is a stated property rather than something a reader
   has to infer.
@@ -242,3 +322,8 @@ assert body["usage"]["llm_calls"] == 4
    different specialist silently seemed worse than failing honestly.
 3. **F13 is filed, not fixed.** If you would rather block on it, the eval corpus is the
    prerequisite and this PR does not depend on the answer.
+4. **The `perf_counter` change touches three files outside this issue's scope**
+   (`gateway`, `base`, `orchestrator`). It is a one-token change per call site with no
+   behavioural effect on Linux, and leaving `routing_score` reading quantised latencies
+   until the pool issue seemed worse than the small scope creep. Say if you would rather it
+   were split out.
