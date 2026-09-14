@@ -9,6 +9,7 @@ the startup sequence that refuses to serve a misconfigured app.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -28,9 +29,10 @@ from owl_mind import __version__
 # from one that passed, because nothing asserts how many should be registered.
 from owl_mind.agents import roster  # noqa: F401
 from owl_mind.agents.orchestrator import AgentOrchestrator
-from owl_mind.core import intent_recognizer  # noqa: F401
+from owl_mind.api.chat import router as chat_router
 from owl_mind.core.config import Settings, load_settings_or_exit
 from owl_mind.core.contracts import registered_contracts, verify_startup_contracts
+from owl_mind.core.intent_recognizer import ChromaTemplateIndex, IntentRecognizer
 from owl_mind.core.llm_gateway import LLMGateway
 
 logger = logging.getLogger("owl_mind")
@@ -100,6 +102,45 @@ def registered_agents(app: FastAPI) -> list[str]:
     return [] if orchestrator is None else orchestrator.registered_agents()
 
 
+async def _build_template_index(settings: Settings) -> Any:
+    """Seed the Chroma template index, or return None and run on two signals.
+
+    ISSUE-008 FR3, decided: wire it. The alternative was to ship a recogniser
+    whose WEIGHTS name a signal that never votes -- 0.35 of the designed panel
+    silently absent on every production request.
+
+    Seeding must not take the boot down with it. A startup that dies because a
+    *degraded* dependency is unreachable contradicts /health's entire design:
+    the endpoint exists to report Chroma as unreachable, which it cannot do
+    from a process that refused to start. Intent recognition is correct without
+    the index -- _fuse divides by the weight that actually contributed, so the
+    thresholds still mean what they say on two signals. It is just less robust
+    to paraphrase, which is a degradation, not an outage.
+    """
+    if not settings.intent_index_enabled:
+        logger.info("intent template index disabled by config; two signals")
+        return None
+
+    try:
+        import chromadb
+
+        client = await asyncio.to_thread(
+            chromadb.HttpClient, host=settings.chroma_host, port=settings.chroma_port
+        )
+        index = ChromaTemplateIndex(client)
+        await index.seed()
+    except Exception as exc:  # noqa: BLE001 -- any failure here is degradation
+        logger.warning(
+            "intent template index unavailable (%s: %s); running on two signals",
+            type(exc).__name__,
+            exc,
+        )
+        return None
+
+    logger.info("intent template index seeded")
+    return index
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Load settings, configure logging, verify contracts. Abort on failure."""
@@ -119,6 +160,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # the contracts have verified the roster is complete, so a missing role is
     # a failed boot rather than a KeyError on the first request that needs it.
     app.state.orchestrator = AgentOrchestrator(app.state.gateway)
+    # Intent recognition, with the template index attached if Chroma is up.
+    app.state.intent_recognizer = IntentRecognizer(
+        app.state.gateway,
+        index=await _build_template_index(settings),
+    )
 
     logger.info(
         "Owl Mind %s starting (env=%s, model=%s)",
@@ -162,6 +208,8 @@ def create_app() -> FastAPI:
             "contracts": registered_contracts(),
             "dependencies": dependencies,
         }
+
+    app.include_router(chat_router)
 
     @app.get("/metrics", tags=["ops"])
     async def metrics() -> Response:

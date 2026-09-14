@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     # -- Model access ----------------------------------------------------
     # No default: a missing key must fail at startup, not on the first call.
     anthropic_api_key: str = Field(min_length=1)
+    # Changing this is not only a cost/quality decision: the intent signal
+    # sends thinking={"type": "disabled"}, which some models reject with a 400
+    # and others accept only below a certain effort. Check the target model's
+    # thinking rules before swapping this -- see core/intent_recognizer.py.
     model: str = "claude-sonnet-5"
 
     # -- Dependencies ----------------------------------------------------
@@ -46,6 +50,22 @@ class Settings(BaseSettings):
     # Ceiling on concurrent Anthropic calls. Consumed by LLMGateway's
     # semaphore -- see core/llm_gateway.py and plan section 3.5.
     llm_max_concurrency: int = Field(default=8, ge=1, le=64)
+
+    # Wall-clock ceiling on one gateway call, covering the wait for a
+    # semaphore slot as well as the request itself (ISSUE-006 F8). The SDK's
+    # own default is ten minutes and it retries timeouts, so its effective
+    # ceiling is timeout x (max_retries + 1) -- a number nobody chose. This
+    # one is enforced with asyncio.timeout, so it is the number it says.
+    #
+    # 60s: the p99 of a single agent turn has never been measured, so this is
+    # a first guess chosen to be clearly above a normal call and clearly below
+    # a hung one. The evaluation issue replaces it with a measured value.
+    llm_timeout_seconds: float = Field(default=60.0, gt=0, le=600)
+
+    # Seed the Chroma-backed intent template index at startup (ISSUE-008 FR3).
+    # Turning this off runs intent recognition on two signals instead of
+    # three; _fuse renormalises, so the thresholds still mean what they say.
+    intent_index_enabled: bool = True
 
     @property
     def chroma_url(self) -> str:

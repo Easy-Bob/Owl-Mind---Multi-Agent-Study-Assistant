@@ -50,10 +50,10 @@ scope naming a tool that cannot work is the same lie as an undeclared one.
 tested; memory, MCP tooling, evaluation and the monitor are still stubs, and every module
 marked *stub* raises `NotImplementedError` naming the issue that implements it.
 
-`/chat` does not exist yet -- the orchestrator is exercised directly in tests. Three kinds
-of request are answered **without calling a model at all**: an explicit ask for a human, an
-ambiguous message (answered with a clarifying question built from the intent distribution),
-and an off-topic one (declined).
+`POST /chat` is live. Three kinds of request are answered **without calling a model at
+all**: an explicit ask for a human, an ambiguous message (answered with a clarifying
+question built from the intent distribution), and an off-topic one (declined). All three
+return HTTP 200 with `primary_agent: null` -- none of them is an error.
 
 ## Quick start
 
@@ -61,12 +61,47 @@ and an off-topic one (declined).
 cp .env.example .env        # then fill in ANTHROPIC_API_KEY
 docker compose up -d --build
 curl http://localhost:8080/health
+
+curl -X POST http://localhost:8080/chat \
+  -H 'content-type: application/json' \
+  -d '{"message": "explain BFS and then quiz me on it"}'
 ```
+
+The reply carries the answer plus the routing that produced it -- `primary_agent`,
+`supporting_agents`, `routing_reason`, and a `usage` rollup naming every component that
+spent tokens on the turn:
+
+```json
+{
+  "primary_agent": "quiz",
+  "supporting_agents": ["concept"],
+  "usage": {
+    "llm_calls": 4,
+    "tokens_by_component": {
+      "intent": 150, "agent:concept": 280, "agent:quiz": 280, "composer": 190
+    }
+  }
+}
+```
+
+> **`/chat` and `/metrics` are unauthenticated**, like everything else here. Fine on a
+> laptop; auth and rate limiting are their own issue and belong in front of this before
+> it is exposed anywhere public. `message` is capped at 4000 characters -- an unbounded
+> text field on an open endpoint is a token bill with a URL.
+
+> `session_id` is accepted and echoed but does nothing yet: memory is a later issue, so
+> two turns sharing a session are not related to each other.
 
 `GET /metrics` exposes Prometheus counters for model usage:
 `llm_tokens_total{component,model,direction}`, `llm_calls_total{component,model,outcome}`,
 and `llm_latency_ms{component}`. Every model call is attributed to a component, which is
 what makes "where is the cost going" a query rather than a guess.
+
+`outcome` has three values, not two: `success`, `error`, and `truncated`. A response cut
+off at `max_tokens` is neither -- the call succeeded and the content is incomplete -- and
+counting it as a success is how it stays invisible. `llm_latency_ms` includes time spent
+waiting for a semaphore slot, so it measures what the caller actually waited, though it
+does not yet separate queue time from model time.
 
 `/health` always answers with HTTP 200. `status` is `ok` when Redis and Chroma are both
 reachable and `degraded` otherwise, with a per-dependency reason -- a health endpoint that
@@ -93,6 +128,7 @@ chroma` starts just those two.
 ```text
 owl_mind/
 ├── api/main.py              FastAPI app, lifespan, /health, /metrics
+├── api/chat.py              POST /chat -- routing, composition, error mapping
 ├── core/
 │   ├── config.py            the only module that reads the environment
 │   ├── contracts.py         startup invariants; failures abort the boot
