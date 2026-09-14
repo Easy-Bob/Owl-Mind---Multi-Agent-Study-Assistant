@@ -23,6 +23,7 @@ message stay in the logs. What the caller gets is a sentence and a status code.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import anthropic
@@ -92,6 +93,13 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
     orchestrator = request.app.state.orchestrator
     gateway = request.app.state.gateway
 
+    # Timed here, not in the orchestrator. The orchestrator's own clock starts
+    # after intent recognition has already happened, so reporting it would
+    # exclude a model call that is on every single request's critical path --
+    # and on the paths that dispatch no agent it is the *entire* cost, which
+    # would have been reported as 0.0ms.
+    started = time.perf_counter()
+
     # The intent call and the agent calls accumulate into one rollup, so
     # `usage` covers the whole turn rather than just the agent half. The
     # orchestrator opens its own scope for the fan-out; nesting is what makes
@@ -158,7 +166,9 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
         supporting_agents=result.supporting_agents,
         dropped_agents=result.dropped_agents,
         escalated=result.escalated,
-        latency_ms=result.latency_ms,
+        # Whole-turn latency: intent recognition plus everything the
+        # orchestrator did. result.latency_ms covers only the second half.
+        latency_ms=round((time.perf_counter() - started) * 1000, 2),
         routing_reason=result.routing_reason,
         tools_used=result.tools_used,
         usage=usage,

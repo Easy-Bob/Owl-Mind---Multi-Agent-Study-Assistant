@@ -180,7 +180,7 @@ class AgentOrchestrator:
         Raises:
             PrimaryAgentFailed: the chosen agent did not answer (FR6).
         """
-        started = time.monotonic()
+        started = time.perf_counter()
         request_id = request.request_id or uuid.uuid4().hex
         intent = request.intent
 
@@ -361,4 +361,4 @@ def _with_drops(reason: str, dropped: list[AgentType]) -> str:
 
 def _elapsed_ms(started: float) -> float:
     """Monotonic elapsed milliseconds. Never time.time() -- it can go backwards."""
-    return (time.monotonic() - started) * 1000
+    return (time.perf_counter() - started) * 1000

@@ -333,3 +333,21 @@ def test_chat_against_the_real_model() -> None:
     assert body["usage"]["llm_calls"] >= 2
     assert body["usage"]["tokens_in"] > 0
     assert body["usage"]["tokens_out"] > 0
+
+
+def test_latency_covers_the_whole_turn_including_intent() -> None:
+    """The no-agent paths still cost a model call, and must say so.
+
+    The orchestrator's own clock starts after intent recognition, so surfacing
+    result.latency_ms would report 0.0ms for a handoff or a decline -- turns
+    that made exactly one model call and nothing else. A client reading that
+    field would conclude the escape hatch was free.
+    """
+    fake = ScriptedAnthropic(_intent_payload((IntentCategory.HUMAN_TUTOR, 0.95)))
+    client = _client(fake)
+    try:
+        body = client.post("/chat", json={"message": "I want to talk to a TA"}).json()
+        assert body["usage"]["llm_calls"] == 1
+        assert body["latency_ms"] > 0.0
+    finally:
+        client.__exit__(None, None, None)

@@ -263,7 +263,7 @@ class LLMGateway:
             )
 
         model = kwargs.pop("model", None) or self._settings.model
-        started = time.monotonic()
+        started = time.perf_counter()
 
         try:
             # The deadline covers the wait for a slot as well as the call. A
@@ -372,5 +372,13 @@ class LLMGateway:
 
 
 def _elapsed_ms(started: float) -> float:
+    """Milliseconds since ``started``.
+
+    perf_counter, not monotonic. On Windows monotonic resolves to
+    15.625ms, so anything faster than a timer tick measures as either
+    0.0 or 16.0 -- which silently quantised every latency this project
+    records, including the AgentStats averages that routing_score reads.
+    perf_counter resolves to 0.1us on the same machine.
+    """
     """Monotonic elapsed milliseconds. Never time.time() -- it can go backwards."""
-    return (time.monotonic() - started) * 1000
+    return (time.perf_counter() - started) * 1000

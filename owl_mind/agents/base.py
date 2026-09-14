@@ -245,7 +245,7 @@ class BaseAgent:
         the monitor's whole purpose is to notice an agent that has started
         losing.
         """
-        started = time.monotonic()
+        started = time.perf_counter()
         try:
             response = await self._run_loop(request)
         except Exception:
@@ -317,7 +317,7 @@ class BaseAgent:
         """
         name = getattr(call, "name", "")
         arguments = getattr(call, "input", {})
-        started = time.monotonic()
+        started = time.perf_counter()
 
         spec = REGISTRY.get(name)
         error: str | None = None
@@ -372,4 +372,4 @@ def _as_text(payload: Any) -> str:
 
 def _elapsed_ms(started: float) -> float:
     """Monotonic elapsed milliseconds. Never time.time() -- it can go backwards."""
-    return (time.monotonic() - started) * 1000
+    return (time.perf_counter() - started) * 1000
