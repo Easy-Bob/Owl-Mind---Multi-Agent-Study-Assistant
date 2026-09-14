@@ -22,3 +22,6 @@ logs/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Evaluation runs are artefacts, not source. The baseline IS committed.
+data/eval/runs/

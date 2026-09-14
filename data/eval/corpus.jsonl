@@ -1,0 +1,135 @@
+// Owl Mind evaluation corpus. ISSUE-009 FR1.
+// One JSON object per line. Lines starting with // are ignored.
+//
+// EVERY CASE BELOW IS source="seed" -- written by a Claude model, which is the
+// same model family as the classifier under test. These cases therefore measure
+// self-consistency, not correctness, and the harness reports them separately
+// from source="human" cases for exactly that reason. Read data/eval/README.md
+// before quoting any number computed from this file.
+//
+// LEARN -- concept_explain
+{"message": "explain how breadth-first search works", "expected_intent": "concept_explain", "source": "seed", "expected_primary_agent": "concept"}
+{"message": "I do not understand what a hash collision is", "expected_intent": "concept_explain", "source": "seed", "expected_primary_agent": "concept"}
+{"message": "can you walk me through how TCP handles congestion", "expected_intent": "concept_explain", "source": "seed", "expected_primary_agent": "concept"}
+{"message": "what does it mean for a language to be context free", "expected_intent": "concept_explain", "source": "seed", "expected_primary_agent": "concept"}
+{"message": "help me understand dynamic programming, I keep getting lost", "expected_intent": "concept_explain", "source": "seed", "expected_primary_agent": "concept"}
+// LEARN -- concept_compare
+{"message": "processes versus threads, what actually differs between them", "expected_intent": "concept_compare", "source": "seed", "expected_primary_agent": "concept"}
+{"message": "when would I pick a linked list over an array", "expected_intent": "concept_compare", "source": "seed", "expected_primary_agent": "concept", "note": "comparison phrased as a choice rather than a difference"}
+{"message": "should I reach for a queue or a stack when exploring a graph", "expected_intent": "concept_compare", "source": "seed", "expected_primary_agent": "concept"}
+{"message": "how does mergesort compare to quicksort in practice", "expected_intent": "concept_compare", "source": "seed", "expected_primary_agent": "concept"}
+// LEARN -- material_search
+{"message": "find the lecture notes on graph traversal", "expected_intent": "material_search", "source": "seed", "expected_primary_agent": "concept"}
+{"message": "which slides covered virtual memory", "expected_intent": "material_search", "source": "seed", "expected_primary_agent": "concept"}
+{"message": "where in the course did we do red black trees", "expected_intent": "material_search", "source": "seed", "expected_primary_agent": "concept"}
+{"message": "show me the reading about deadlock prevention", "expected_intent": "material_search", "source": "seed", "expected_primary_agent": "concept"}
+// PRACTICE -- problem_help
+{"message": "I am stuck on two-sum, can you give me a hint", "expected_intent": "problem_help", "source": "seed", "expected_primary_agent": "practice"}
+{"message": "I have been staring at this recursion problem for an hour", "expected_intent": "problem_help", "source": "seed", "expected_primary_agent": "practice"}
+{"message": "nudge me in the right direction on course schedule", "expected_intent": "problem_help", "source": "seed", "expected_primary_agent": "practice"}
+{"message": "how should I start thinking about the knapsack problem", "expected_intent": "problem_help", "source": "seed", "expected_primary_agent": "practice"}
+{"message": "give me a hint for the word ladder question, not the answer", "expected_intent": "problem_help", "source": "seed", "expected_primary_agent": "practice", "note": "explicitly refuses the answer -- must not become homework_check"}
+// PRACTICE -- homework_check
+{"message": "did I get the second part of the problem set right", "expected_intent": "homework_check", "source": "seed", "expected_primary_agent": "practice", "note": "boundary vs answer_submission: the assignment posed the question, not us"}
+{"message": "can you check my assignment solution before I submit it", "expected_intent": "homework_check", "source": "seed", "expected_primary_agent": "practice"}
+{"message": "did I get the recurrence relation right on problem 2", "expected_intent": "homework_check", "source": "seed", "expected_primary_agent": "practice"}
+{"message": "review my homework answers for the sorting section", "expected_intent": "homework_check", "source": "seed", "expected_primary_agent": "practice"}
+// PRACTICE -- code_review
+{"message": "can you look at my implementation and tell me what is wrong", "expected_intent": "code_review", "source": "seed", "expected_primary_agent": "practice"}
+{"message": "my loop is off by one somewhere and I cannot see where", "expected_intent": "code_review", "source": "seed", "expected_primary_agent": "practice"}
+{"message": "is this the idiomatic way to write a BFS in python", "expected_intent": "code_review", "source": "seed", "expected_primary_agent": "practice"}
+{"message": "my code passes the samples but fails the hidden tests", "expected_intent": "code_review", "source": "seed", "expected_primary_agent": "practice"}
+// PRACTICE -- complexity_analysis
+{"message": "what is the time complexity of my nested loop solution", "expected_intent": "complexity_analysis", "source": "seed", "expected_primary_agent": "practice"}
+{"message": "is this O(n log n) or O(n squared)", "expected_intent": "complexity_analysis", "source": "seed", "expected_primary_agent": "practice"}
+{"message": "does my recursive helper blow up the stack on big inputs", "expected_intent": "complexity_analysis", "source": "seed", "expected_primary_agent": "practice"}
+{"message": "help me work out the big O of this algorithm", "expected_intent": "complexity_analysis", "source": "seed", "expected_primary_agent": "practice"}
+// PLAN -- study_plan
+{"message": "build me a revision schedule for the next three weeks", "expected_intent": "study_plan", "source": "seed", "expected_primary_agent": "planner"}
+{"message": "put together a study order for me for the next few days", "expected_intent": "study_plan", "source": "seed", "expected_primary_agent": "planner"}
+{"message": "I have two weeks left and five topics, help me plan", "expected_intent": "study_plan", "source": "seed", "expected_primary_agent": "planner"}
+{"message": "how should I split my time between theory and practice", "expected_intent": "study_plan", "source": "seed", "expected_primary_agent": "planner"}
+// PLAN -- progress_query
+{"message": "how am I doing on graphs so far", "expected_intent": "progress_query", "source": "seed", "expected_primary_agent": "planner"}
+{"message": "where am I falling behind compared to the rest of the syllabus", "expected_intent": "progress_query", "source": "seed", "expected_primary_agent": "planner"}
+{"message": "what have I actually covered this month", "expected_intent": "progress_query", "source": "seed", "expected_primary_agent": "planner"}
+{"message": "am I ready for the exam yet", "expected_intent": "progress_query", "source": "seed", "expected_primary_agent": "planner", "note": "readiness reads as progress, not as a plan request"}
+// PLAN -- deadline
+{"message": "my algorithms coursework is due on Friday", "expected_intent": "deadline", "source": "seed", "expected_primary_agent": "planner"}
+{"message": "when is the next problem set due", "expected_intent": "deadline", "source": "seed", "expected_primary_agent": "planner"}
+{"message": "I have an exam in ten days", "expected_intent": "deadline", "source": "seed", "expected_primary_agent": "planner"}
+{"message": "remind me what is due before the end of term", "expected_intent": "deadline", "source": "seed", "expected_primary_agent": "planner"}
+// ASSESS -- quiz_request
+{"message": "quiz me on hash tables", "expected_intent": "quiz_request", "source": "seed", "expected_primary_agent": "quiz"}
+{"message": "ask me some questions about sorting algorithms", "expected_intent": "quiz_request", "source": "seed", "expected_primary_agent": "quiz"}
+{"message": "test my knowledge of graph algorithms", "expected_intent": "quiz_request", "source": "seed", "expected_primary_agent": "quiz"}
+{"message": "throw five short problems at me about linked lists", "expected_intent": "quiz_request", "source": "seed", "expected_primary_agent": "quiz"}
+// ASSESS -- answer_submission
+{"message": "my answer is a queue", "expected_intent": "answer_submission", "source": "seed", "expected_primary_agent": "quiz", "note": "the grading turn of the quiz loop -- we posed the question"}
+{"message": "here is my answer: it would be O(n log n) because of the sort", "expected_intent": "answer_submission", "source": "seed", "expected_primary_agent": "quiz"}
+{"message": "I think the answer to your second question is depth first search", "expected_intent": "answer_submission", "source": "seed", "expected_primary_agent": "quiz"}
+{"message": "for question one I said a hash map and for two I said a heap", "expected_intent": "answer_submission", "source": "seed", "expected_primary_agent": "quiz"}
+// ASSESS -- mock_exam
+{"message": "set me a full midterm paper to sit end to end", "expected_intent": "mock_exam", "source": "seed", "expected_primary_agent": "quiz"}
+{"message": "sit me down for a proper two hour assessment", "expected_intent": "mock_exam", "source": "seed", "expected_primary_agent": "quiz"}
+{"message": "I want a full length practice test under exam conditions", "expected_intent": "mock_exam", "source": "seed", "expected_primary_agent": "quiz"}
+{"message": "simulate the final exam for me", "expected_intent": "mock_exam", "source": "seed", "expected_primary_agent": "quiz"}
+// ASSESS -- explain_back
+{"message": "let me explain dijkstra to you and tell me if I have it right", "expected_intent": "explain_back", "source": "seed", "expected_primary_agent": "quiz"}
+{"message": "check my understanding: a stack is last in first out", "expected_intent": "explain_back", "source": "seed", "expected_primary_agent": "quiz"}
+{"message": "I think caching works by keeping recent data closer to the cpu, is that right", "expected_intent": "explain_back", "source": "seed", "expected_primary_agent": "quiz", "note": "no rubric was pinned in advance -- the boundary against answer_submission"}
+{"message": "tell me if my mental model of pointers is correct", "expected_intent": "explain_back", "source": "seed", "expected_primary_agent": "quiz"}
+// SUPPORT -- motivation
+{"message": "I am completely burnt out and want to give up on this course", "expected_intent": "motivation", "source": "seed"}
+{"message": "everyone else seems to get this and I do not", "expected_intent": "motivation", "source": "seed"}
+{"message": "I failed the midterm and I am losing confidence", "expected_intent": "motivation", "source": "seed"}
+{"message": "I cannot make myself start revising", "expected_intent": "motivation", "source": "seed"}
+// SUPPORT -- human_tutor
+{"message": "I want to talk to a real teaching assistant", "expected_intent": "human_tutor", "source": "seed", "expected_primary_agent": "tutor_handoff"}
+{"message": "can you put me through to a human tutor", "expected_intent": "human_tutor", "source": "seed", "expected_primary_agent": "tutor_handoff"}
+{"message": "I need to speak to an actual person about this", "expected_intent": "human_tutor", "source": "seed", "expected_primary_agent": "tutor_handoff"}
+{"message": "this is not helping, escalate me to a TA please", "expected_intent": "human_tutor", "source": "seed", "expected_primary_agent": "tutor_handoff"}
+// SUPPORT -- greeting
+{"message": "hi there", "expected_intent": "greeting", "source": "seed"}
+{"message": "morning, ready when you are", "expected_intent": "greeting", "source": "seed"}
+{"message": "hey, are you there", "expected_intent": "greeting", "source": "seed"}
+{"message": "hello again", "expected_intent": "greeting", "source": "seed"}
+// SUPPORT -- feedback
+{"message": "that explanation was really clear, thank you", "expected_intent": "feedback", "source": "seed"}
+{"message": "this has been much more useful than the textbook", "expected_intent": "feedback", "source": "seed"}
+{"message": "I would rather you just told me than hinted", "expected_intent": "feedback", "source": "seed", "note": "negative feedback must not route to motivation"}
+{"message": "thanks, that finally made it click", "expected_intent": "feedback", "source": "seed"}
+// OUT OF SCOPE -- other
+{"message": "is it going to rain at the weekend", "expected_intent": "other", "source": "seed"}
+{"message": "book me a table for two at eight", "expected_intent": "other", "source": "seed"}
+{"message": "who won the football last night", "expected_intent": "other", "source": "seed"}
+{"message": "write me a poem about the sea", "expected_intent": "other", "source": "seed"}
+{"message": "what is a good recipe for banana bread", "expected_intent": "other", "source": "seed"}
+{"message": "how do I change a tyre", "expected_intent": "other", "source": "seed"}
+{"message": "translate this sentence into french for me", "expected_intent": "other", "source": "seed"}
+{"message": "should I buy this stock", "expected_intent": "other", "source": "seed"}
+{"message": "say something funny to cheer me up", "expected_intent": "other", "source": "seed"}
+{"message": "what is the capital of peru", "expected_intent": "other", "source": "seed", "note": "general knowledge, not CS study"}
+{"message": "help me write a cover letter", "expected_intent": "other", "source": "seed"}
+{"message": "my landlord will not return my deposit, what are my rights", "expected_intent": "other", "source": "seed"}
+{"message": "what time does the library close", "expected_intent": "other", "source": "seed", "note": "university-adjacent but not study help -- a likely false negative"}
+{"message": "can you summarise this news article", "expected_intent": "other", "source": "seed"}
+{"message": "how do I fix my wifi", "expected_intent": "other", "source": "seed", "note": "technical but not coursework -- the nearest wrong intent is code_review"}
+{"message": "what should I have for lunch", "expected_intent": "other", "source": "seed"}
+{"message": "plan my holiday to spain", "expected_intent": "other", "source": "seed", "note": "planning verb, wrong domain -- likely to pull study_plan"}
+{"message": "quiz me on world capitals", "expected_intent": "other", "source": "seed", "note": "quiz verb, wrong domain -- the pattern rule will fire on this"}
+{"message": "explain the offside rule", "expected_intent": "other", "source": "seed", "note": "explain verb, wrong domain"}
+{"message": "review my cv please", "expected_intent": "other", "source": "seed", "note": "review verb, wrong domain -- likely to pull code_review"}
+// COMPOSITE -- two intents in different groups
+{"message": "explain BFS and then quiz me on it", "expected_intent": "concept_explain", "source": "seed", "expected_primary_agent": "concept", "expected_supporting_agents": ["quiz"], "note": "ISSUE-006 F13: a pattern rule currently makes quiz the primary here"}
+{"message": "I am stuck on two-sum and I also need a plan for this week", "expected_intent": "problem_help", "source": "seed", "expected_primary_agent": "practice", "expected_supporting_agents": ["planner"]}
+{"message": "why is my solution O(n squared) and what concept am I missing", "expected_intent": "complexity_analysis", "source": "seed", "expected_primary_agent": "practice", "expected_supporting_agents": ["concept"]}
+{"message": "I failed the graphs quiz, what should I revise next", "expected_intent": "progress_query", "source": "seed", "expected_primary_agent": "planner", "expected_supporting_agents": ["concept"]}
+{"message": "explain dynamic programming then give me practice questions", "expected_intent": "concept_explain", "source": "seed", "expected_primary_agent": "concept", "expected_supporting_agents": ["quiz"]}
+{"message": "check my sorting homework and explain where I went wrong conceptually", "expected_intent": "homework_check", "source": "seed", "expected_primary_agent": "practice", "expected_supporting_agents": ["concept"]}
+{"message": "my exam is Friday, test me and tell me what to focus on", "expected_intent": "mock_exam", "source": "seed", "expected_primary_agent": "quiz", "expected_supporting_agents": ["planner"]}
+{"message": "compare BFS and DFS and then check my understanding of both", "expected_intent": "concept_compare", "source": "seed", "expected_primary_agent": "concept", "expected_supporting_agents": ["quiz"]}
+{"message": "review my code and tell me its time complexity", "expected_intent": "code_review", "source": "seed", "expected_primary_agent": "practice", "note": "both intents are in PRACTICE, so this must stay single-agent"}
+{"message": "find the notes on hashing and quiz me from them", "expected_intent": "material_search", "source": "seed", "expected_primary_agent": "concept", "expected_supporting_agents": ["quiz"]}
+{"message": "I am behind on everything and need a plan and some encouragement", "expected_intent": "study_plan", "source": "seed", "expected_primary_agent": "planner", "note": "motivation has no owning agent, so this must not fan out"}
+{"message": "explain paging, then set me a mock exam on memory management", "expected_intent": "concept_explain", "source": "seed", "expected_primary_agent": "concept", "expected_supporting_agents": ["quiz"]}

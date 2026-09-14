@@ -414,66 +414,12 @@ class IntentRecognizer:
             self._embedding_signal(message),
         )
 
-        scores = _fuse(
-            {
-                "llm": llm_scores,
-                "embedding": embedding_scores,
-                "pattern": pattern_scores,
-            }
-        )
-
-        entities = extract_entities(message, now=moment)
-
-        if scores:
-            # Score descending, then intent name ascending -- the same order
-            # supporting_candidates() uses, so primary and supporting selection
-            # cannot disagree about a tie.
-            best = min(scores, key=lambda intent: (-scores[intent], intent.value))
-            best_confidence = scores[best]
-        else:
-            best, best_confidence = None, 0.0
-
-        # OTHER carries two distinct meanings and the difference decides how the
-        # request is answered, so it is recorded rather than inferred:
-        #
-        #   fallback_from set   -- "evidence below bar". Something was asked and
-        #       the panel disagreed about what. The orchestrator asks which of
-        #       the top candidates was meant; the evidence is in `scores`.
-        #   fallback_from None  -- "no relevant intent". OTHER won on its own
-        #       merits (the model classified the message as off-topic), or no
-        #       signal returned anything at all. The orchestrator declines.
-        #
-        # Collapsing the two loses the ability to tell an ambiguous study
-        # question from a question about the weather.
-        if best is None or best_confidence < PRIMARY_THRESHOLD:
-            category = IntentCategory.OTHER
-            confidence = 0.0
-            fallback_from = best
-        else:
-            category, confidence = best, best_confidence
-            fallback_from = None
-
-        # Describe the intent this judgement is about. On the fallback path
-        # that is the displaced candidate -- per-signal zeroes against OTHER
-        # would explain nothing on precisely the path that most needs
-        # explaining.
-        explained = fallback_from or category
-        source_scores = {
-            "llm": llm_scores.get(explained, 0.0),
-            "embedding": embedding_scores.get(explained, 0.0),
-            "pattern": pattern_scores.get(explained, 0.0),
-        }
-
-        return Intent(
-            category=category,
-            group=_INTENT_GROUPS[category],
-            confidence=round(confidence, 4),
-            scores={intent: round(score, 4) for intent, score in scores.items()},
-            source_scores=source_scores,
-            urgency=compute_urgency(category, entities, now=moment),
-            entities=entities,
-            fallback_from=fallback_from,
-            corroborated=frozenset(llm_scores) | frozenset(pattern_scores),
+        return assemble_intent(
+            message,
+            llm=llm_scores,
+            embedding=embedding_scores,
+            pattern=pattern_scores,
+            now=moment,
         )
 
     # -- signals ------------------------------------------------------------
@@ -516,6 +462,87 @@ class IntentRecognizer:
         return _parse_llm_response(response)
 
 
+
+
+def assemble_intent(
+    message: str,
+    *,
+    llm: dict[IntentCategory, float],
+    embedding: dict[IntentCategory, float],
+    pattern: dict[IntentCategory, float],
+    now: datetime | None = None,
+    weights: dict[str, float] | None = None,
+) -> Intent:
+    """Turn three signal maps into one judgement.
+
+    Extracted from ``recognize`` so the evaluation sweep can re-fuse recorded
+    signals through *this* code rather than a copy of it. A sweep that tunes
+    weights against a reimplementation measures the reimplementation, which is
+    worse than not sweeping at all.
+
+    ``weights`` overrides WEIGHTS for one call. Only the sweep passes it;
+    production reads the module constant.
+    """
+    moment = now or datetime.now(UTC)
+    scores = _fuse(
+        {"llm": llm, "embedding": embedding, "pattern": pattern},
+        weights=weights,
+    )
+
+    entities = extract_entities(message, now=moment)
+
+    if scores:
+        # Score descending, then intent name ascending -- the same order
+        # supporting_candidates() uses, so primary and supporting selection
+        # cannot disagree about a tie.
+        best = min(scores, key=lambda intent: (-scores[intent], intent.value))
+        best_confidence = scores[best]
+    else:
+        best, best_confidence = None, 0.0
+
+    # OTHER carries two distinct meanings and the difference decides how the
+    # request is answered, so it is recorded rather than inferred:
+    #
+    #   fallback_from set   -- "evidence below bar". Something was asked and
+    #       the panel disagreed about what. The orchestrator asks which of
+    #       the top candidates was meant; the evidence is in `scores`.
+    #   fallback_from None  -- "no relevant intent". OTHER won on its own
+    #       merits (the model classified the message as off-topic), or no
+    #       signal returned anything at all. The orchestrator declines.
+    #
+    # Collapsing the two loses the ability to tell an ambiguous study
+    # question from a question about the weather.
+    if best is None or best_confidence < PRIMARY_THRESHOLD:
+        category = IntentCategory.OTHER
+        confidence = 0.0
+        fallback_from = best
+    else:
+        category, confidence = best, best_confidence
+        fallback_from = None
+
+    # Describe the intent this judgement is about. On the fallback path
+    # that is the displaced candidate -- per-signal zeroes against OTHER
+    # would explain nothing on precisely the path that most needs
+    # explaining.
+    explained = fallback_from or category
+    source_scores = {
+        "llm": llm.get(explained, 0.0),
+        "embedding": embedding.get(explained, 0.0),
+        "pattern": pattern.get(explained, 0.0),
+    }
+
+    return Intent(
+        category=category,
+        group=_INTENT_GROUPS[category],
+        confidence=round(confidence, 4),
+        scores={intent: round(score, 4) for intent, score in scores.items()},
+        source_scores=source_scores,
+        urgency=compute_urgency(category, entities, now=moment),
+        entities=entities,
+        fallback_from=fallback_from,
+        corroborated=frozenset(llm) | frozenset(pattern),
+    )
+
 def _pattern_signal(message: str) -> dict[IntentCategory, float]:
     """Every matching rule contributes, not just the best one."""
     scores: dict[IntentCategory, float] = {}
@@ -525,7 +552,10 @@ def _pattern_signal(message: str) -> dict[IntentCategory, float]:
     return scores
 
 
-def _fuse(signals: dict[str, dict[IntentCategory, float]]) -> dict[IntentCategory, float]:
+def _fuse(
+    signals: dict[str, dict[IntentCategory, float]],
+    weights: dict[str, float] | None = None,
+) -> dict[IntentCategory, float]:
     """Weighted mean across every candidate every signal returned.
 
     Not a vote between three argmaxes -- that is the shape that made composite
@@ -552,7 +582,7 @@ def _fuse(signals: dict[str, dict[IntentCategory, float]]) -> dict[IntentCategor
     for name, scores in signals.items():
         if not scores:
             continue
-        weight = WEIGHTS[name]
+        weight = (weights or WEIGHTS)[name]
         contributed += weight
         for intent, score in scores.items():
             fused[intent] = fused.get(intent, 0.0) + weight * score
