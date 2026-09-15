@@ -97,6 +97,12 @@ spent tokens on the turn:
 and `llm_latency_ms{component}`. Every model call is attributed to a component, which is
 what makes "where is the cost going" a query rather than a guess.
 
+A fourth counter, `llm_unattributed_calls_total{component,model,reason}`, counts calls
+whose token usage the provider never returned -- a failed call has no usage object, so
+its tokens cannot be known. It bounds the gap rather than closing it: token totals are
+complete to within that count, and `/chat` surfaces `unattributed_calls` on any request
+where it is non-zero.
+
 `outcome` has three values, not two: `success`, `error`, and `truncated`. A response cut
 off at `max_tokens` is neither -- the call succeeded and the content is incomplete -- and
 counting it as a success is how it stays invisible. `llm_latency_ms` includes time spent

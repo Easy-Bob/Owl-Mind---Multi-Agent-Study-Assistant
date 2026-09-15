@@ -17,6 +17,7 @@ from owl_mind.core.llm_gateway import (
     KNOWN_COMPONENTS,
     LLM_CALLS,
     LLM_TOKENS,
+    LLM_UNATTRIBUTED,
     LLMGateway,
     LLMTimeout,
     TokenUsage,
@@ -250,8 +251,15 @@ async def test_error_inside_a_scope_does_not_count_as_a_call():
         with pytest.raises(anthropic.RateLimitError):
             await gateway.complete(component="intent", max_tokens=16, messages=[])
 
+    # llm_calls stays paired with the token totals: a call with no usage
+    # object must not make tokens-per-call wrong.
     assert usage.llm_calls == 0
     assert usage.tokens_in == 0
+    # But the call still happened and may still have been billed, so it is
+    # counted where a reader will see it (ISSUE-006 F10). Reporting nothing
+    # here is what made failed-call spend structurally invisible.
+    assert usage.unattributed_calls == 1
+    assert usage.as_dict()["unattributed_by_component"] == {"intent": 1}
 
 
 # -- housekeeping ----------------------------------------------------------
@@ -406,3 +414,63 @@ async def test_nested_scopes_share_one_rollup(gateway):
 
     assert outer.llm_calls == 2
     assert set(outer.by_component) == {"intent", "agent:concept"}
+
+
+# -- ISSUE-006 F10: the blind spot is bounded, not hidden ------------------
+
+
+async def test_a_successful_request_reports_no_unattributed_field(gateway):
+    """A field reading 0 on every healthy request is noise.
+
+    It appears only when the token figures are actually incomplete, so its
+    presence in a response body is itself the signal.
+    """
+    async with gateway.request_scope() as usage:
+        await gateway.complete(component="intent", max_tokens=16, messages=[])
+    assert "unattributed_calls" not in usage.as_dict()
+
+
+async def test_a_timeout_is_counted_apart_from_a_rejection(gateway):
+    """A timeout reached the provider and is probably billed; a 400 is not.
+
+    Same blind spot, very different cost, so they do not share a label.
+    """
+    model = get_settings().model
+    gateway._timeout = 0.05
+    gateway._client.delay = 5.0
+
+    before = _counter(
+        LLM_UNATTRIBUTED, component="intent", model=model, reason="timeout"
+    )
+    with pytest.raises(LLMTimeout):
+        await gateway.complete(component="intent", max_tokens=16, messages=[])
+
+    assert (
+        _counter(LLM_UNATTRIBUTED, component="intent", model=model, reason="timeout")
+        == before + 1
+    )
+
+
+async def test_partial_failure_leaves_the_totals_marked_incomplete(gateway):
+    """The case F10 is really about: a fan-out where one branch failed.
+
+    ISSUE-005 FR6 drops a failed supporting agent and answers anyway, so this
+    is a request that succeeded while spending money nobody can see. The
+    response must not present its token totals as complete.
+    """
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    failure = anthropic.RateLimitError(
+        "slow down", response=httpx.Response(429, request=request), body=None
+    )
+
+    async with gateway.request_scope() as usage:
+        await gateway.complete(component="agent:concept", max_tokens=16, messages=[])
+        gateway._client.raises = failure
+        with pytest.raises(anthropic.RateLimitError):
+            await gateway.complete(component="agent:quiz", max_tokens=16, messages=[])
+
+    payload = usage.as_dict()
+    assert payload["llm_calls"] == 1
+    assert payload["tokens_in"] > 0
+    assert payload["unattributed_calls"] == 1
+    assert payload["unattributed_by_component"] == {"agent:quiz": 1}

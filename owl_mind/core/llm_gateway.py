@@ -14,7 +14,12 @@ anywhere else under ``owl_mind/``.
 What the gateway does
 ---------------------
 - Requires a ``component`` label on every call, so no cost is unattributable.
-- Captures token usage, including the cache fields, defensively.
+- Captures token usage of every *successful* call, cache fields included.
+  A failed call carries no usage object, so its tokens are unknowable
+  rather than merely unrecorded; those calls are counted under
+  ``llm_unattributed_calls_total`` and on the request rollup, which bounds
+  the gap instead of leaving the attribution claim quietly false
+  (ISSUE-006 F10).
 - Holds a semaphore so a burst of parallel agents cannot exhaust the rate limit.
 - Emits Prometheus counters, scraped at ``/metrics``.
 - Accumulates a per-request rollup through a contextvar.
@@ -92,6 +97,23 @@ LLM_CALLS = Counter(
     ["component", "model", "outcome"],
 )
 
+# Calls whose token cost cannot be seen (ISSUE-006 F10).
+#
+# A failed call carries no usage object, so its tokens are not merely
+# unrecorded -- they are unknowable. This counter does not close that gap; it
+# bounds it. With it, "tokens_total is complete to within N calls" is a
+# statement someone can check, and the gateway's attribution claim stops being
+# quietly false on the error path.
+#
+# `reason` separates the two cases because their cost implications differ: a
+# rejected request is probably not billed, while a timeout was sent, probably
+# ran, and probably is.
+LLM_UNATTRIBUTED = Counter(
+    "llm_unattributed_calls_total",
+    "Calls whose token usage the provider never returned.",
+    ["component", "model", "reason"],
+)
+
 LLM_LATENCY = Histogram(
     "llm_latency_ms",
     "Model call latency in milliseconds, by component.",
@@ -148,11 +170,30 @@ class RequestUsage:
     llm_calls: int = 0
     total: TokenUsage = TokenUsage()
     by_component: dict[str, TokenUsage] = field(default_factory=dict)
+    # Calls this request made whose tokens nobody can see (ISSUE-006 F10).
+    # Carried beside the totals rather than logged away, so a reader of the
+    # rollup is told how complete it is instead of assuming it is complete.
+    unattributed_calls: int = 0
+    unattributed_by_component: dict[str, int] = field(default_factory=dict)
 
     def record(self, component: str, usage: TokenUsage) -> None:
         self.llm_calls += 1
         self.total = self.total + usage
         self.by_component[component] = self.by_component.get(component, TokenUsage()) + usage
+
+    def record_unattributed(self, component: str) -> None:
+        """A call happened, may have been billed, and reported no usage.
+
+        Deliberately does *not* increment ``llm_calls``. That field pairs with
+        the token totals -- counting a call with no tokens in it would make
+        tokens-per-call quietly wrong. The two fields add up instead:
+        ``llm_calls + unattributed_calls`` is the number of calls made, and
+        ``llm_calls`` alone is the number the token figures describe.
+        """
+        self.unattributed_calls += 1
+        self.unattributed_by_component[component] = (
+            self.unattributed_by_component.get(component, 0) + 1
+        )
 
     @property
     def tokens_in(self) -> int:
@@ -164,7 +205,7 @@ class RequestUsage:
 
     def as_dict(self) -> dict[str, Any]:
         """Shape surfaced on the chat response by a later issue."""
-        return {
+        payload: dict[str, Any] = {
             "llm_calls": self.llm_calls,
             "tokens_in": self.tokens_in,
             "tokens_out": self.tokens_out,
@@ -172,6 +213,13 @@ class RequestUsage:
                 component: usage.total for component, usage in self.by_component.items()
             },
         }
+        if self.unattributed_calls:
+            # Present only when non-zero: a field that reads 0 on every
+            # successful request is noise, and one that appears is a signal
+            # that the token figures above are incomplete.
+            payload["unattributed_calls"] = self.unattributed_calls
+            payload["unattributed_by_component"] = dict(self.unattributed_by_component)
+        return payload
 
 
 # The rollup is shared by reference. Tasks created inside a request scope copy
@@ -281,7 +329,10 @@ class LLMGateway:
                 async with self._semaphore:
                     response = await self._client.messages.create(model=model, **kwargs)
         except TimeoutError as exc:
-            self._record_error(component, model, started)
+            # Distinct reason: unlike a rejected request, this one reached the
+            # provider and probably generated tokens that are now billed and
+            # invisible. It is the most expensive kind of unattributed call.
+            self._record_error(component, model, started, reason="timeout")
             logger.warning(
                 "llm call timed out after %.1fs: component=%s model=%s",
                 self._timeout,
@@ -317,9 +368,25 @@ class LLMGateway:
 
     # -- bookkeeping --------------------------------------------------------
 
-    def _record_error(self, component: str, model: str, started: float) -> None:
+    def _record_error(
+        self, component: str, model: str, started: float, reason: str = "error"
+    ) -> None:
+        """Record a call that produced no usage object.
+
+        The tokens are unknowable, not merely unrecorded: the provider returned
+        an exception, and an exception has no usage on it. Counting the call
+        under ``llm_unattributed_calls_total`` is what keeps the gateway's
+        attribution claim honest -- it turns "every token is attributed" into
+        "every token of every *successful* call is attributed, and here is how
+        many calls that excludes" (ISSUE-006 F10).
+        """
         LLM_CALLS.labels(component=component, model=model, outcome="error").inc()
+        LLM_UNATTRIBUTED.labels(component=component, model=model, reason=reason).inc()
         LLM_LATENCY.labels(component=component).observe(_elapsed_ms(started))
+
+        rollup = _request_usage.get()
+        if rollup is not None:
+            rollup.record_unattributed(component)
 
     def _record_success(
         self, component: str, model: str, started: float, response: Any

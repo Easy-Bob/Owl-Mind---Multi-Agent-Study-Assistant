@@ -119,7 +119,14 @@ timeout within the configured deadline and `llm_calls_total{outcome="error"}` in
 
 ### F10 — Failed calls record no tokens
 
-**Priority P2.**
+**RESOLVED.** Not by closing the gap -- a failed call carries no usage object, so its
+tokens are unknowable, not merely unrecorded -- but by bounding it.
+`llm_unattributed_calls_total{component,model,reason}` counts them, `reason` separates a
+timeout (sent, probably billed) from a rejection (probably not), and `RequestUsage`
+carries `unattributed_calls` so a partial fan-out failure surfaces on the `/chat`
+response rather than presenting incomplete totals as complete. The field appears only
+when non-zero, so its presence is the signal. The gateway docstring no longer claims
+more than it delivers.
 
 `_record_error` (`owl_mind/core/llm_gateway.py:275`) increments the call counter and the
 latency histogram but no token counters, because the exception carries no usage object.
